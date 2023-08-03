@@ -1,0 +1,20 @@
+name: ltm
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.9
+  - ipykernel
+  - numpy
+  - pandas
+  - rasterio
+  - matplotlib
+  - pyproj
+  - proj-data
+  - varname
+  - scipy
+  - scikit-image
+  - scikit-learn
+  - jupyterlab
+  - geopandas
+  - coverage
