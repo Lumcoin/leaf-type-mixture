@@ -18,9 +18,12 @@ dependencies:
   - geopandas
   - coverage
   - earthengine-api
+  - eemont
   - folium
+  - utm
   - seaborn
   - dask
+  - pytest
   - pip
   - pip:
     - scikit-elm

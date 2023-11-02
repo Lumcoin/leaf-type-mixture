@@ -7,4 +7,17 @@ setup(
     description='Leaf type mixture prediction with machine learning from satellite data.',
     author='Peter Hofinger',
     license='MIT',
+    install_requires=[
+        'ee',
+        'eemont',
+        'rasterio',
+        'matplotlib',
+        'numpy',
+        'pandas',
+        'pyproj',
+        'requests',
+        'scikit-learn',
+        'skelm',
+        'utm',
+    ],
 )

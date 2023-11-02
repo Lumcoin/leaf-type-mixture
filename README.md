@@ -3,6 +3,8 @@ Leaf Type Mixture
 
 Leaf type mixture prediction with machine learning from satellite data.
 
+Note: Random state will be set by sklearn, if scipy >= 0.16 is available.
+
 Project Organization
 ------------
 
