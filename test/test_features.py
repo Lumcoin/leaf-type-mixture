@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import rasterio
 
-from src.features import drop_nan, load_X_and_band_names, load_y
+from src.features import drop_nan, load_multi_band_raster
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def y_path(tmp_path):
 
 
 def test_load_X_and_band_names(X_path):
-    X, band_names = load_X_and_band_names(X_path)
+    X, band_names = load_multi_band_raster(X_path)
     assert isinstance(X, np.ndarray)
     assert isinstance(band_names, list)
     assert X.shape == (600, 10)
@@ -39,9 +39,9 @@ def test_load_X_and_band_names(X_path):
 
 
 def test_load_y(y_path):
-    y = load_y(y_path)
+    y, _ = load_multi_band_raster(y_path)
     assert isinstance(y, np.ndarray)
-    assert y.shape == (200,)
+    assert y.shape == (200, 1)
 
 
 def test_drop_nan():
