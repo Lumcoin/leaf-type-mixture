@@ -3,27 +3,10 @@ channels:
   - defaults
   - conda-forge
 dependencies:
+  - python=3.10
   - ipykernel
-  - numpy
-  - pandas
-  - rasterio
-  - matplotlib
-  - pyproj
-  - proj-data
-  - varname
-  - scipy
-  - scikit-image
-  - scikit-learn
-  - jupyterlab
-  - geopandas
-  - coverage
-  - earthengine-api
-  - eemont
-  - folium
-  - utm
-  - seaborn
-  - dask
   - pytest
+  - scikit-optimize
   - pip
   - pip:
-    - scikit-elm
+    - -e .

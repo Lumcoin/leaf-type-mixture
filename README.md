@@ -3,6 +3,15 @@ Leaf Type Mixture
 
 Leaf type mixture prediction with machine learning from satellite data.
 
+Reinstall conda environment:
+```bash
+~/mambaforge/Scripts/activate.bat
+mamba activate base
+mamba env remove -n ltm
+mamba clean -a -y
+mamba env create -f environment.yml
+```
+
 Note: Random state will be set by sklearn, if scipy >= 0.16 is available.
 
 Project Organization
