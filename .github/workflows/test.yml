@@ -15,15 +15,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-  
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-  
+      - name: Cache python packages
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
+          key: testing-packages-${{ hashFiles('**/setup.py') }}
       - name: Install dependencies
         run: pip install -e '.[linting]'
-      
       - name: Lint Code
         run: python -m pylint --rcfile=.pylintrc **/*.py
   
@@ -35,14 +37,16 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-  
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-  
+      - name: Cache python packages
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
+          key: testing-packages-${{ hashFiles('**/setup.py') }}
       - name: Install dependencies
         run: pip install -e '.[testing]'
-      
       - name: Run Tests
         run: pytest

@@ -30,6 +30,7 @@ setup(
         ],
         "testing": [
             "pytest",
+            "scikit-elm",
         ],
     },
 )
