@@ -1,20 +1,26 @@
 import os
-from typing import List, Tuple
+from collections import defaultdict
+from typing import Callable, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
+from scipy.cluster import hierarchy
 from scipy.cluster.hierarchy import dendrogram, ward
 from scipy.spatial.distance import squareform
 from scipy.stats import kendalltau, pearsonr, spearmanr
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
+from sklearn.inspection import permutation_importance
 from sklearn.metrics import ConfusionMatrixDisplay
 from tqdm import tqdm
+from typeguard import typechecked
 
 
+@typechecked
 def load_multi_band_raster(
-        raster_path: str | List[str],
+    raster_path: str | List[str],
 ) -> Tuple[np.ndarray, List[str]]:
     """Loads one or many rasters with multiple bands and returns the data ready to use with sklearn and band names.
 
@@ -25,20 +31,12 @@ def load_multi_band_raster(
     Returns:
         A tuple of a numpy array containing the data and a list of strings representing the band names.
     """
-    # Type check
-    if not isinstance(raster_path, (str, list)):
-        raise TypeError(
-            f"Expected string or list, got {type(raster_path)} instead.")
-
-    # Ensure X_path is a list
+    # Create list of paths if only one path is given
     if isinstance(raster_path, str):
         raster_path = [raster_path]
 
     # Check if all paths are valid
     for path in raster_path:
-        if not isinstance(path, str):
-            raise TypeError(
-                f"Expected string, got {type(path)} instead.")
         if not path.endswith(".tif"):
             raise ValueError(
                 f"Expected path to .tif file, got '{path}' instead.")
@@ -76,12 +74,13 @@ def load_multi_band_raster(
     return data, band_names
 
 
+@typechecked
 def interpolate_X_and_bands(
-        X: np.ndarray,
-        band_names: List[str],
-        cyclic: bool = True,
-        method: str = "linear",
-        order: int = None,
+    X: np.ndarray,
+    band_names: List[str],
+    cyclic: bool = True,
+    method: str = "linear",
+    order: Optional[int] = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """Interpolate missing time series values in X using the given method.
 
@@ -100,28 +99,6 @@ def interpolate_X_and_bands(
     Returns:
         A tuple of a numpy array containing the interpolated data and a list of strings representing the band names. The band names are unchanged.
     """
-    # Type check
-    if not isinstance(X, np.ndarray):
-        raise TypeError(
-            f"Expected numpy array, got {type(X)} instead.")
-    if not isinstance(band_names, list):
-        raise TypeError(
-            f"Expected list, got {type(band_names)} instead.")
-    illegal_band_names = [
-        band_name for band_name in band_names if not isinstance(band_name, str)]
-    if any(illegal_band_names):
-        raise TypeError(
-            f"Expected string for every band name, got {', '.join(str(type(band_name)) for band_name in illegal_band_names)} instead.")
-    if not isinstance(cyclic, bool):
-        raise TypeError(
-            f"Expected boolean, got {type(cyclic)} instead.")
-    if not isinstance(method, str):
-        raise TypeError(
-            f"Expected string, got {type(method)} instead.")
-    if order is not None and not isinstance(order, int):
-        raise TypeError(
-            f"Expected integer, got {type(order)} instead.")
-
     # Get the number of composites and number of bands
     num_composites = int(band_names[-1].split()[0])
     num_bands = len(band_names) // num_composites
@@ -150,11 +127,12 @@ def interpolate_X_and_bands(
     return interpolated_X, band_names
 
 
+@typechecked
 def save_raster(
-        X: np.ndarray,
-        band_names: List[str],
-        source_path: str,
-        destination_path: str,
+    X: np.ndarray,
+    band_names: List[str],
+    source_path: str,
+    destination_path: str,
 ) -> str:
     """Saves the data as a raster image.
 
@@ -171,25 +149,6 @@ def save_raster(
     Returns:
         A string representing the file path to the destination image.
     """
-    # Type check
-    if not isinstance(X, np.ndarray):
-        raise TypeError(
-            f"Expected numpy array, got {type(X)} instead.")
-    if not isinstance(band_names, list):
-        raise TypeError(
-            f"Expected list, got {type(band_names)} instead.")
-    illegal_band_names = [
-        band_name for band_name in band_names if not isinstance(band_name, str)]
-    if any(illegal_band_names):
-        raise TypeError(
-            f"Expected string for every band name, got {', '.join(str(type(band_name)) for band_name in illegal_band_names)} instead.")
-    if not isinstance(source_path, str):
-        raise TypeError(
-            f"Expected string, got {type(source_path)} instead.")
-    if not isinstance(destination_path, str):
-        raise TypeError(
-            f"Expected string, got {type(destination_path)} instead.")
-
     # Copy X
     X = X.copy()
 
@@ -209,47 +168,25 @@ def save_raster(
     return destination_path
 
 
+@typechecked
 def raster2rgb(
-        raster: np.ndarray,
-        bands: Tuple[str],
-        rgb_bands: List[str] = None,
+    raster: np.ndarray,
+    bands: Tuple[str, ...],
+    rgb_bands: Optional[List[str]] = None,
 ) -> np.ndarray:
     """Creates an RGB image from the raster ready for plt.plot().
 
     Args:
         raster:
-            A numpy array containing the data.
+            A numpy array containing the raster data with shape (num_bands, height, width).
         bands:
             A tuple of strings representing the band names.
         rgb_bands:
-            A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
+            An optional list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
 
     Returns:
         A numpy array containing the RGB image ready for plt.plot().
     """
-    # Type check
-    if not isinstance(raster, np.ndarray):
-        raise TypeError(
-            f"Expected numpy array, got {type(raster)} instead.")
-    if not isinstance(bands, tuple):
-        raise TypeError(
-            f"Expected tuple, got {type(bands)} instead.")
-    illegal_bands = [
-        band for band in bands if not isinstance(band, str)]
-    if any(illegal_bands):
-        raise TypeError(
-            f"Expected string for every band, got {', '.join(str(type(band)) for band in illegal_bands)} instead.")
-    if rgb_bands is not None:
-        if not isinstance(rgb_bands, list):
-            raise TypeError(
-                f"Expected list, got {type(rgb_bands)} instead.")
-
-        illegal_rgb_bands = [
-            band for band in rgb_bands if not isinstance(band, str)]
-        if any(illegal_rgb_bands):
-            raise TypeError(
-                f"Expected string for every band, got {', '.join(str(type(band)) for band in illegal_rgb_bands)} instead.")
-
     # Check if rgb_bands has length of three or is None
     if rgb_bands is not None and len(rgb_bands) != 3:
         raise ValueError("rgb_bands must be a list of length 3 or None")
@@ -278,24 +215,19 @@ def raster2rgb(
     return rgb_plot
 
 
+@typechecked
 def drop_nan(
-        *arrays: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+    *arrays: np.ndarray,
+) -> np.ndarray | Tuple[np.ndarray, ...]:
     """Drops rows with NaN values.
 
     Args:
         arrays:
-            A tuple of numpy arrays of either one or two dimensions.
+            Numpy arrays of either one or two dimensions.
 
     Returns:
-        A tuple of numpy arrays containing the dataset image and label image without NaN values.
+        A numpy array or a tuple of numpy arrays containing the input data without NaN values.
     """
-    # Type check
-    for array in arrays:
-        if not isinstance(array, np.ndarray):
-            raise TypeError(
-                f"Expected numpy array, got {type(array)} instead.")
-
     # Check if all arrays have the same number of rows and at max two dimensions
     if len(set(array.shape[0] for array in arrays)) != 1:
         raise ValueError(
@@ -317,13 +249,20 @@ def drop_nan(
         raise ValueError(
             "All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?")
 
-    return tuple(array[mask] for array in arrays)
+    # Prepare result
+    result = tuple(array[mask] for array in arrays)
+    if len(arrays) == 1:
+        result = result[0]
+
+    return result
 
 
+@typechecked
 def get_similarity_matrix(
-        X: np.ndarray,
-        band_names: List[str] = None,
-        method: str = "pearson",
+    X: np.ndarray,
+    band_names: Optional[List[str]] = None,
+    method: str = "pearson",
+    seed: Optional[int] = None,
 ) -> pd.DataFrame:
     """Calculates the similarity matrix for the data.
 
@@ -331,29 +270,15 @@ def get_similarity_matrix(
         X:
             A numpy array containing the data.
         band_names:
-            A list of strings representing the band names.
+            An optional list of strings representing the band names.
         method:
             A string representing the method to use for calculating the similarity matrix. Must be either 'pearson', 'spearman', or 'mutual_info'. Defaults to 'pearson'.
+        seed:
+            An optional integer representing the seed for mutual information. Defaults to None.
 
     Returns:
         A numpy array containing the similarity matrix. It is symmetrical, has a diagonal of ones and values from 0 to 1.
     """
-    # Type check
-    if not isinstance(X, np.ndarray):
-        raise TypeError(
-            f"Expected numpy array, got {type(X)} instead.")
-    if band_names is not None and not isinstance(band_names, list):
-        raise TypeError(
-            f"Expected list, got {type(band_names)} instead.")
-    illegal_band_names = [
-        band_name for band_name in band_names if not isinstance(band_name, str)]
-    if any(illegal_band_names):
-        raise TypeError(
-            f"Expected string for every band name, got {', '.join(str(type(band_name)) for band_name in illegal_band_names)} instead.")
-    if not isinstance(method, str):
-        raise TypeError(
-            f"Expected string, got {type(method)} instead.")
-
     # Check if X has two dimensions
     if len(X.shape) != 2:
         raise ValueError(
@@ -383,7 +308,8 @@ def get_similarity_matrix(
             for j, band_2 in enumerate(X.T):
                 similarity_matrix[i, j] = mutual_info_regression(band_1.reshape(-1, 1),
                                                                  band_2,
-                                                                 n_neighbors=n_neighbors)[0]
+                                                                 n_neighbors=n_neighbors,
+                                                                 random_state=seed)[0]
         # Esoteric way to achieve a diagonal of 1s
         entropy = np.zeros_like(similarity_matrix)
         for i in range(similarity_matrix.shape[0]):
@@ -413,8 +339,9 @@ def get_similarity_matrix(
     return similarity_matrix
 
 
+@typechecked
 def show_similarity_matrix(
-        similarity_matrix: pd.DataFrame,
+    similarity_matrix: pd.DataFrame,
 ) -> plt.Axes:
     """Displays the similarity matrix.
 
@@ -448,8 +375,9 @@ def show_similarity_matrix(
     return ax
 
 
+@typechecked
 def show_dendrogram(
-        similarity_matrix: pd.DataFrame,
+    similarity_matrix: pd.DataFrame,
 ) -> plt.Axes:
     """Displays a dendrogram according to the similarity matrix.
 
@@ -482,3 +410,100 @@ def show_dendrogram(
     )
 
     return ax
+
+
+@typechecked
+def dendrogram_dim_red(
+    X: np.ndarray,
+    band_names: List[str],
+    similarity_matrix: pd.DataFrame,
+    threshold: float,
+) -> Tuple[np.ndarray, List[str]]:
+    """Performs dimensionality reduction using the threshold of the dendrogram.
+
+    Implements approach described in https://scikit-learn.org/stable/auto_examples/inspection/plot_permutation_importance_multicollinear.html#handling-multicollinear-features
+
+    Args:
+        X:
+            A numpy array containing the data.
+        band_names:
+            A list of strings representing the band names.
+        similarity_matrix:
+            A pandas DataFrame containing the similarity matrix.
+        threshold:
+            A float representing the threshold for the dendrogram. Choose the value by inspecting the dendrogram plotted with show_dendrogram().
+
+    Returns:
+        A tuple of a numpy array containing the data and a list of strings representing the band names.
+    """
+    # Check if similarity matrix is square
+    index = list(similarity_matrix.index)
+    columns = list(similarity_matrix.columns)
+    if index != band_names or columns != band_names:
+        raise ValueError(
+            "Similarity matrix must be square with band_names as index and columns.")
+
+    # Compute linkage
+    distance_matrix = 1 - similarity_matrix
+    dist_linkage = hierarchy.ward(squareform(distance_matrix))
+
+    # Compute clusters
+    cluster_ids = hierarchy.fcluster(
+        dist_linkage, threshold, criterion="distance")
+    cluster_id_to_band_ids = defaultdict(list)
+    for idx, cluster_id in enumerate(cluster_ids):
+        cluster_id_to_band_ids[cluster_id].append(idx)
+    selected_bands = [v[0] for v in cluster_id_to_band_ids.values()]
+    selected_band_names = list(np.array(band_names)[selected_bands])
+
+    selected_X = X[:, selected_bands]
+
+    return selected_X, selected_band_names
+
+
+@typechecked
+def permutation_dim_red(
+    X: np.ndarray,
+    band_names: List[str],
+    y: np.ndarray,
+    threshold: float,
+    n_repeats: int = 1,
+    scoring: Optional[Callable] = None,
+    seed: Optional[int] = None,
+) -> Tuple[np.ndarray, List[str]]:
+    """Performs dimensionality reduction by thresholding features based on permutation feature importance on a stock RandomForestRegressor.
+
+    Args:
+        X:
+            A numpy array containing the data.
+        band_names:
+            A list of strings representing the band names.
+        y:
+            A numpy array containing the labels.
+        threshold:
+            A float representing the threshold for permutation importance. The scorer can be set with the scoring argument.
+        n_repeats:
+            An integer representing the number of times to permute a feature. Increasing this argument linearly increases the computation time, large values result in a long computation time. Defaults to 1.
+        scoring:
+            An optional scoring function to use for permutation importance. Defaults to scorer of RandomForestRegressor.
+        seed:
+            An optional integer representing the seed for permutation importance. Defaults to None.
+
+    Returns:
+        A tuple of a numpy array containing the data and a list of strings representing the band names.
+    """
+    regressor = RandomForestRegressor(random_state=seed)
+    regressor.fit(X, y)
+
+    result = permutation_importance(
+        regressor, X, y, n_repeats=n_repeats, scoring=scoring, random_state=seed
+    )
+
+    forest_importances = pd.Series(result.importances_mean, index=band_names)
+    forest_importances = forest_importances[forest_importances >= threshold]
+
+    selected_band_names = list(forest_importances.index)
+    selected_X = X[:, [band_names.index(band_name)
+                       for band_name in selected_band_names]]
+
+    return selected_X, selected_band_names

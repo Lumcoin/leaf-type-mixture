@@ -8,10 +8,11 @@ Functions:
 
 import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import ee
 import eemont
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
@@ -19,9 +20,14 @@ import requests
 import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
+from typeguard import typechecked
 
 
-def _split_time_window(time_window, num_splits):
+@typechecked
+def _split_time_window(
+    time_window: Tuple[str, str],
+    num_splits: int,
+) -> List[Tuple[str, str]]:
     start = datetime.datetime.strptime(time_window[0], '%Y-%m-%d')
     end = datetime.datetime.strptime(time_window[1], '%Y-%m-%d')
     delta = (end - start + datetime.timedelta(days=1)) / num_splits
@@ -39,7 +45,12 @@ def _split_time_window(time_window, num_splits):
     return sub_windows
 
 
-def _download_image(image, scale, crs):
+@typechecked
+def _download_image(
+    image: ee.Image,
+    scale: float,
+    crs: str,
+) -> requests.Response:
     download_params = {
         "scale": scale,
         "crs": crs,
@@ -50,20 +61,32 @@ def _download_image(image, scale, crs):
     return requests.get(url)
 
 
-def _image_response2file(image, file_path, mask, bands):
+@typechecked
+def _image_response2file(
+    image: bytes,
+    file_path: str,
+    mask: bytes,
+    bands: List[str],
+) -> None:
     with MemoryFile(image) as memfile, MemoryFile(mask) as mask_memfile:
         with memfile.open() as dataset, mask_memfile.open() as mask_dataset:
             profile = dataset.profile
             profile["nodata"] = np.nan
             with rasterio.open(file_path, "w", **profile) as dst:
                 raster = dataset.read()
-                mask = mask_dataset.read()
-                raster[mask == 0] = np.nan
+                mask_raster = mask_dataset.read()
+                raster[mask_raster == 0] = np.nan
                 dst.write(raster)
                 dst.descriptions = tuple(bands)
 
 
-def _save_image(image, file_path, scale, crs):
+@typechecked
+def _save_image(
+    image: ee.Image,
+    file_path: str,
+    scale: float,
+    crs: str,
+) -> None:
     try:
         image_response = _download_image(image, scale, crs)
         mask_response = _download_image(image.mask(), scale, crs)
@@ -82,7 +105,10 @@ def _save_image(image, file_path, scale, crs):
             f"FAILED to either compute or download the image for {file_path} most likely due to limits of Google Earth Engine.")
 
 
-def _mask_s2_clouds(image):
+@typechecked
+def _mask_s2_clouds(
+    image: ee.Image,
+) -> ee.Image:
     """Masks clouds in a Sentinel-2 image using the QA band.
 
     From https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#colab-python
@@ -109,19 +135,139 @@ def _mask_s2_clouds(image):
     return image.updateMask(mask).divide(10000)
 
 
+@typechecked
+def _prettify_band_name(
+    band_name: str,
+) -> str:
+    composite_idx, _, *band_label, reducer_label = band_name.split("_")
+    composite_idx = int(composite_idx) + 1
+    pretty_name = f"{composite_idx} {reducer_label.title()} {'_'.join(band_label)}"
+
+    return pretty_name
+
+
+@typechecked
+def combine_band_name(
+    composite_idx: int,
+    reducer: str,
+    band_label: str,
+) -> str:
+    """Combines a composite index, reducer, and band label into a band name.
+
+    Args:
+        composite_idx:
+            An integer for the composite index starting at 1.
+        reducer:
+            A string for the reducer.
+        band_label:
+            A string for the band label.
+
+    Returns:
+        A string for the band name.
+    """
+    return f"{composite_idx} {reducer.title()} {band_label}"
+
+
+@typechecked
+def split_band_name(
+    band_name: str,
+) -> Tuple[int, str, str]:
+    """Splits a band name into its composite index, reducer, and band label.
+
+    Args:
+        A string for the band name.
+
+    Returns:
+        A tuple of the composite index starting at 1, reducer, and band label.
+    """
+    composite_idx, reducer, band_label = band_name.split(maxsplit=2)
+
+    return int(composite_idx), reducer, band_label
+
+
+@typechecked
+def show_timeseries(
+    raster_path: str,
+    reducer: str,
+    rgb_bands: Optional[List[str]] = None,
+) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
+    # Read raster and get band names
+    with rasterio.open(raster_path) as src:
+        raster = src.read()
+        bands = src.descriptions
+
+    # Check if rgb_bands has length of three or is None
+    if rgb_bands is not None and len(rgb_bands) != 3:
+        raise ValueError("rgb_bands must be a list of length 3 or None")
+
+    # Fill rgb_bands with bands and maybe None if it is None
+    if rgb_bands is None:
+        if len(bands) == 1:
+            rgb_bands = [bands[0]] * 3
+        elif len(bands) == 2:
+            rgb_bands = [bands[0], bands[1], None]
+        else:
+            rgb_bands = list(bands[:3])
+
+        for i, rgb_band in enumerate(rgb_bands):
+            if rgb_band is not None:
+                _, _, rgb_bands[i] = split_band_name(rgb_bands[i])
+
+    # Get the rasters for the rgb bands
+    num_composites, _, _ = split_band_name(bands[-1])
+    rgb_rasters = []
+    for i in range(1, num_composites + 1):
+        rgb_raster = []
+        for b in rgb_bands:
+            if b is not None:
+                raster_band = combine_band_name(i, reducer, b)
+                band_raster = raster[bands.index(raster_band)]
+            else:
+                band_raster = np.zeros_like(raster[0])
+
+            rgb_raster.append(band_raster)
+
+        rgb_raster = np.stack(rgb_raster)
+        rgb_raster = rgb_raster.transpose(1, 2, 0)
+        rgb_rasters.append(rgb_raster)
+
+    # Get min and max values for normalization
+    min_value = min(np.nanmin(rgb_raster) for rgb_raster in rgb_rasters)
+    max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
+
+    # Plot the rasters below each other
+    fig, axs = plt.subplots(nrows=6, figsize=(10, 10))
+    fig.tight_layout()
+    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
+        # normalize values and apply gamma correction
+        rgb_raster -= min_value
+        rgb_raster /= max_value - min_value
+        rgb_raster **= (1 / 2.2)
+        rgb_raster[np.isnan(rgb_raster)] = 0
+        ax.imshow(rgb_raster)
+        ax.set_title(f"{i} {reducer}")
+        ax.axis("off")
+
+    # Show the plot
+    plt.show()
+
+    return fig, axs
+
+
+@typechecked
 def sentinel_composite(
-        plot: pd.DataFrame,
-        time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
-        X_path: str = "../data/processed/X.tif",
-        y_path: str = "../data/processed/y.tif",
-        num_composites: int = 1,
-        temporal_reducers: List[str] = None,
-        indices: List[str] = None,
-        level_2a: bool = False,
-        sentinel_bands: List[str] = None,
-        remove_clouds: bool = True,
-        remove_qa: bool = True,
-        areas_as_y: bool = False,
+    plot: pd.DataFrame,
+    time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
+    X_path: str = "../data/processed/X.tif",
+    y_path: str = "../data/processed/y.tif",
+    num_composites: int = 1,
+    temporal_reducers: Optional[List[str]] = None,
+    indices: Optional[List[str]] = None,
+    level_2a: bool = False,
+    sentinel_bands: Optional[List[str]] = None,
+    remove_clouds: bool = True,
+    remove_qa: bool = True,
+    areas_as_y: bool = False,
 ) -> Tuple[str, str]:
     """Creates a composite from many Sentinel 2 satellite images for a given plot.
 
@@ -160,34 +306,6 @@ def sentinel_composite(
         ee.Initialize()
     print("Preparing data...")
 
-    # Type checks
-    if not isinstance(plot, pd.DataFrame):
-        raise TypeError("plot must be a pandas DataFrame")
-    if not isinstance(time_window, tuple) or len(time_window) != 2:
-        raise TypeError("timewindow must be a tuple of two dates or strings")
-    if not isinstance(time_window[0], (datetime.date, str)) or not isinstance(time_window[1], (datetime.date, str)):
-        raise TypeError(
-            "timewindow elements must be either datetime.date or str")
-    if not isinstance(X_path, str):
-        raise TypeError("X_path must be a string")
-    if not isinstance(y_path, str):
-        raise TypeError("y_path must be a string")
-    if indices is not None and (not isinstance(indices, list) or not all(isinstance(i, str) for i in indices)):
-        raise TypeError("indices must be a list of strings")
-    if not isinstance(num_composites, int) or num_composites < 1:
-        raise TypeError("num_composites must be a positive integer")
-    if temporal_reducers is not None and (not isinstance(temporal_reducers, list) or not all(isinstance(i, str) for i in temporal_reducers)):
-        raise TypeError(
-            "temporal_reducers must be a list of strings")
-    if not isinstance(level_2a, bool):
-        raise TypeError("level_2a must be a boolean")
-    if not isinstance(sentinel_bands, list) and sentinel_bands is not None:
-        raise TypeError("sentinel_bands must be a list of strings")
-    if not isinstance(remove_clouds, bool):
-        raise TypeError("remove_clouds must be a boolean")
-    if not isinstance(areas_as_y, bool):
-        raise TypeError("area_as_y must be a boolean")
-
     # Ensure proper plot DataFrame format
     expected_dtypes = {
         "longitude": np.float64,
@@ -204,27 +322,24 @@ def sentinel_composite(
     date_format = "%Y-%m-%d"
     time_window = tuple(datetime.datetime.strptime(
         date, date_format) if isinstance(date, str) else date for date in time_window)
-    time_window = tuple(date.strftime(date_format)
-                        for date in time_window)
+    time_window = tuple(date.strftime(date_format) for date in time_window)
     start, end = time_window
     if start > end:
         raise ValueError(
             f"start ({start}) must be before end ({end}) of timewindow")
 
     # Ensure proper path format
-    X_path = Path(X_path)
-    y_path = Path(y_path)
-    if X_path.suffix != ".tif" or y_path.suffix != ".tif":
+    X_pathlib = Path(X_path)
+    y_pathlib = Path(y_path)
+    if X_pathlib.suffix != ".tif" or y_pathlib.suffix != ".tif":
         raise ValueError(
             "X_path and y_path must be strings ending in .tif")
-    if not X_path.parent.exists():
+    if not X_pathlib.parent.exists():
         raise ValueError(
-            f"X_path parent directory does not exist: {X_path.parent}")
-    if not y_path.parent.exists():
+            f"X_path parent directory does not exist: {X_pathlib.parent}")
+    if not y_pathlib.parent.exists():
         raise ValueError(
-            f"y_path parent directory does not exist: {y_path.parent}")
-    X_path = str(X_path)
-    y_path = str(y_path)
+            f"y_path parent directory does not exist: {y_pathlib.parent}")
 
     # Check if indices are valid eemont indices
     if indices is not None:
@@ -350,9 +465,7 @@ def sentinel_composite(
     # Prettify band names
     pretty_names = []
     for band_name in data.bandNames().getInfo():
-        composite_idx, _, *band_label, reducer_label = band_name.split("_")
-        composite_idx = int(composite_idx) + 1
-        pretty_name = f"{composite_idx} {reducer_label.title()} {'_'.join(band_label)}"
+        pretty_name = _prettify_band_name(band_name)
         pretty_names.append(pretty_name)
     data = data.rename(pretty_names)
 

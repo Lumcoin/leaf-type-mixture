@@ -1,25 +1,38 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
 from sklearn.base import RegressorMixin
-from sklearn.metrics._scorer import _PredictScorer
+from sklearn.metrics._scorer import _BaseScorer, _PredictScorer
 from sklearn.model_selection import (BaseCrossValidator, KFold,
                                      RandomizedSearchCV, cross_val_predict)
+from skopt import BayesSearchCV
+from typeguard import typechecked
 
 from src.features import drop_nan, load_multi_band_raster, raster2rgb
 
 
+@typechecked
 class _EndMemberSplitter(BaseCrossValidator):
-    def __init__(self, n_splits=5, shuffle=False, random_state=None):
+    def __init__(
+        self,
+        n_splits: int = 5,
+        shuffle: bool = False,
+        random_state: Optional[int] = None
+    ) -> None:
         self.n_splits = n_splits
         self.k_fold = KFold(n_splits=n_splits, shuffle=shuffle,
                             random_state=random_state)
 
-    def split(self, X, y, groups=None):
+    def split(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        groups: Optional[np.ndarray] = None,
+    ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         for train, test in self.k_fold.split(X, y):
             indices = np.where((y[train] == 0)
                                | (y[train] == 1))[0]
@@ -32,14 +45,25 @@ class _EndMemberSplitter(BaseCrossValidator):
 
             yield end_member_train, test
 
-    def get_n_splits(self, X=None, y=None, groups=None):
+    def get_n_splits(
+        self,
+        X: Optional[np.ndarray] = None,
+        y: Optional[np.ndarray] = None,
+        groups: Optional[np.ndarray] = None,
+    ) -> int:
         return self.n_splits
 
 
-def _y2raster(y, indices, plot_shape):
+@typechecked
+def _y2raster(
+    y: np.ndarray,
+    indices: np.ndarray,
+    plot_shape: Tuple[int, int, int]
+) -> np.ndarray:
     if len(y.shape) == 1:
         y = np.expand_dims(y, axis=1)
 
+    # Create raster from y with the help of an indices array
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = y
@@ -49,16 +73,44 @@ def _y2raster(y, indices, plot_shape):
     return raster
 
 
+@typechecked
+def area2mixture_scorer(
+    scorer: _BaseScorer
+) -> _BaseScorer:
+    """Modifies the score function of a scorer to use the computed leaf type mixture from leaf type areas.
+
+    Args:
+        scorer:
+            A _BaseScorer scorer, e.g. returned by make_scorer().
+
+    Returns:
+        Scorer with modified score function.
+    """
+    score_func = scorer._score_func
+
+    def mixture_score_func(y_true: np.ndarray, y_pred: np.ndarray, *args, **kwargs) -> Callable:
+        # broadleaf is 0, conifer is 1
+        y_true = y_true[:, 0] / (y_true[:, 0] + y_true[:, 1])
+        y_pred = y_pred[:, 0] / (y_pred[:, 0] + y_pred[:, 1])
+
+        return score_func(y_true, y_pred, *args, **kwargs)
+
+    scorer._score_func = mixture_score_func
+
+    return scorer
+
+
+@typechecked
 def hyperparam_search(
-        X: np.ndarray,
-        y: np.ndarray,
-        search_space: Dict[RegressorMixin, Dict[str, Any]],
-        scoring: Dict[str, _PredictScorer],
-        refit: str,
-        kfold_from_endmembers: bool = False,
-        kfold_n_splits: int = 5,
-        kfold_n_iter: int = 10,
-        random_state: int = None,
+    X: np.ndarray,
+    y: np.ndarray,
+    search_space: Dict[RegressorMixin, Dict[str, Any]],
+    scoring: Dict[str, _PredictScorer],
+    refit: str,
+    kfold_from_endmembers: bool = False,
+    kfold_n_splits: int = 5,
+    kfold_n_iter: int = 10,
+    random_state: Optional[int] = None,
 ) -> List[RandomizedSearchCV]:
     """Performs hyperparameter search for multiple models.
 
@@ -78,26 +130,6 @@ def hyperparam_search(
         random_state:
             Random state to use for reproducible results.
     """
-    # Type check
-    if not isinstance(X, np.ndarray):
-        raise TypeError("X must be a numpy array")
-    if not isinstance(y, np.ndarray):
-        raise TypeError("y must be a numpy array")
-    if not isinstance(search_space, dict):
-        raise TypeError("search_space must be a dictionary")
-    if not isinstance(scoring, dict):
-        raise TypeError("scoring must be a dictionary")
-    if not isinstance(refit, str):
-        raise TypeError("refit must be a string")
-    if not isinstance(kfold_from_endmembers, bool):
-        raise TypeError("kfold_from_endmembers must be a boolean")
-    if not isinstance(kfold_n_splits, int):
-        raise TypeError("kfold_n_splits must be an integer")
-    if not isinstance(kfold_n_iter, int):
-        raise TypeError("kfold_n_iter must be an integer")
-    if not isinstance(random_state, (int, type(None))):
-        raise TypeError("random_state must be an integer")
-
     # Use custom kfold splitter if kfold_from_endmembers is True
     if kfold_from_endmembers:
         cv = _EndMemberSplitter(
@@ -128,10 +160,11 @@ def hyperparam_search(
     return search_results
 
 
+@typechecked
 def best_scores(
-        search_results: List[RandomizedSearchCV],
-        scoring: Dict[str, _PredictScorer],
-) -> Dict[str, float]:
+    search_results: List[RandomizedSearchCV],
+    scoring: Dict[str, _PredictScorer],
+) -> pd.DataFrame:
     """Returns the best scores for each model.
 
     Args:
@@ -166,14 +199,15 @@ def best_scores(
     return df
 
 
+@typechecked
 def cv_predict(
-        search_results: List[RandomizedSearchCV],
-        X_path: str | List[str],
-        y_path: str | List[str],
-        rgb_bands: List[str] = None,
-        kfold_n_splits: int = 5,
-        kfold_from_endmembers: bool = False,
-        random_state: int = None,
+    search_results: List[RandomizedSearchCV],
+    X_path: str | List[str],
+    y_path: str | List[str],
+    rgb_bands: Optional[List[str]] = None,
+    kfold_n_splits: int = 5,
+    kfold_from_endmembers: bool = False,
+    random_state: Optional[int] = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
     """Predicts the labels using cross_val_predict and plots the results for each model.
 
@@ -196,22 +230,6 @@ def cv_predict(
     Returns:
         Tuple of ground truth image and list of predicted images.
     """
-    # Type check
-    if not isinstance(search_results, list):
-        raise TypeError("search_results must be a list")
-    if any(not isinstance(result, RandomizedSearchCV) for result in search_results):
-        raise TypeError(
-            "search_results must be a list of RandomizedSearchCV objects")
-    if not isinstance(X_path, str):
-        raise TypeError("X_path must be a string")
-    if not isinstance(y_path, str):
-        raise TypeError("y_path must be a string")
-    # rgb_bands is checked in raster2rgb()
-    if not isinstance(kfold_n_splits, int):
-        raise TypeError("kfold_n_splits must be an integer")
-    if not isinstance(kfold_from_endmembers, bool):
-        raise TypeError("kfold_from_endmembers must be a boolean")
-
     # Load data and plot shape
     X, _ = load_multi_band_raster(X_path)
     y, _ = load_multi_band_raster(y_path)
