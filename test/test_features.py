@@ -1,14 +1,15 @@
+# pylint: disable=missing-module-docstring
 import numpy as np
 import pytest
 import rasterio
 
-from src.features import drop_nan, load_multi_band_raster
+from ltm.features import drop_nan, load_multi_band_raster
 
 
-@pytest.fixture
-def X_path(tmp_path):
-    X = np.random.rand(10, 20, 30)
-    X_file = tmp_path / "X.tif"
+@pytest.fixture(name="X_path")
+def fixture_X_path(tmp_path):  # pylint: disable=invalid-name
+    X = np.random.rand(10, 20, 30)  # pylint: disable=invalid-name
+    X_file = tmp_path / "X.tif"  # so pylint: disable=invalid-name
     with rasterio.open(
         X_file,
         "w",
@@ -23,8 +24,8 @@ def X_path(tmp_path):
     return str(X_file)
 
 
-@pytest.fixture
-def y_path(tmp_path):
+@pytest.fixture(name="y_path")
+def fixture_y_path(tmp_path):
     y = np.random.rand(10, 20)
     y_file = tmp_path / "y.tif"
     with rasterio.open(
@@ -41,8 +42,8 @@ def y_path(tmp_path):
     return str(y_file)
 
 
-def test_load_X_and_band_names(X_path):
-    X, band_names = load_multi_band_raster(X_path)
+def test_load_X_and_band_names(X_path):  # pylint: disable=invalid-name
+    X, band_names = load_multi_band_raster(X_path)  # pylint: disable=invalid-name
     assert isinstance(X, np.ndarray)
     assert isinstance(band_names, list)
     assert X.shape == (600, 10)
@@ -57,9 +58,11 @@ def test_load_y(y_path):
 
 
 def test_drop_nan():
-    X = np.array([[1, 2, np.nan], [4, np.nan, 6], [7, 8, 9]])
+    X = np.array(  # pylint: disable=invalid-name
+        [[1, 2, np.nan], [4, np.nan, 6], [7, 8, 9]]
+    )
     y = np.array([0, 1, 0])
-    X_clean, y_clean = drop_nan(X, y)
+    X_clean, y_clean = drop_nan(X, y)  # pylint: disable=invalid-name
     assert isinstance(X_clean, np.ndarray)
     assert isinstance(y_clean, np.ndarray)
     assert X_clean.shape == (1, 3)

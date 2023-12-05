@@ -49,7 +49,10 @@ def load_multi_band_raster(
         with rasterio.open(path) as src:
             raster = src.read()
             band_count = src.count
-            curr_band_names = list(src.descriptions)
+            curr_band_names = [
+                band_name if isinstance(band_name, str) else str(i)
+                for i, band_name in enumerate(src.descriptions)
+            ]
             curr_data = raster.transpose(1, 2, 0).reshape(-1, band_count)
 
         # First image

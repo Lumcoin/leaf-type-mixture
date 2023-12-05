@@ -13,14 +13,24 @@ from sklearn.model_selection import (
     RandomizedSearchCV,
     cross_val_predict,
 )
-from skopt import BayesSearchCV
 from typeguard import typechecked
 
-from src.features import drop_nan, load_multi_band_raster, raster2rgb
+from ltm.features import drop_nan, load_multi_band_raster, raster2rgb
 
 
 @typechecked
 class _EndMemberSplitter(BaseCrossValidator):
+    """K-fold splitter that only uses end members for training.
+
+    End members are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental.
+
+    Attributes:
+        n_splits:
+            Number of splits to use for kfold splitting.
+        k_fold:
+            KFold object to use for splitting.
+    """
+
     def __init__(
         self,
         n_splits: int = 5,

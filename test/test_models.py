@@ -1,22 +1,22 @@
-import os
-import tempfile
+# pylint: disable=missing-module-docstring
 import unittest
 
-import numpy as np
 import pandas as pd
-from scipy.stats import loguniform, randint, uniform
+from scipy.stats import loguniform, uniform
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import make_scorer, mean_squared_error, median_absolute_error
 from sklearn.model_selection import RandomizedSearchCV
 
-from src.models import _EndMemberSplitter, best_scores, cv_predict, hyperparam_search
+from ltm.models import best_scores, hyperparam_search
 
 
-class TestModels(unittest.TestCase):
+class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
     def setUp(self):
-        self.X, self.y = make_regression(n_samples=100, n_features=10, random_state=42)
+        (  # pylint: disable=unbalanced-tuple-unpacking
+            self.X,  # pylint: disable=invalid-name
+            self.y,
+        ) = make_regression(n_samples=100, n_features=10, random_state=42)
         self.search_space = {
             ELMRegressor(): {
                 "alpha": loguniform(1e-8, 1e5),

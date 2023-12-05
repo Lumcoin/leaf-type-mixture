@@ -5,9 +5,10 @@ channels:
 dependencies:
   - python=3.10
   - ipykernel
-  - pytest
-  - typeguard
+  - scikit-elm
   - scikit-optimize
+  - dill
+  - pytest
   - black
   - pip
   - pip:
