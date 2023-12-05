@@ -25,4 +25,24 @@ jobs:
         run: pip install -e '.[linting]'
       
       - name: Lint Code
-        run: python -m pylint --rcfile=.pylintrc test/*.py
+        run: python -m pylint --rcfile=.pylintrc **/*.py
+  
+  unittest:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+  
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+  
+      - name: Install dependencies
+        run: pip install -e '.[testing]'
+      
+      - name: Run Tests
+        run: pytest

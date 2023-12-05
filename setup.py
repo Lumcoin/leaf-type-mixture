@@ -28,5 +28,8 @@ setup(
         "linting": [
             "pylint",
         ],
+        "testing": [
+            "pytest",
+        ],
     },
 )
