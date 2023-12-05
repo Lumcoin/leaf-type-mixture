@@ -3,18 +3,11 @@ channels:
   - defaults
   - conda-forge
 dependencies:
-  - python=3.9
+  - python=3.10
   - ipykernel
-  - numpy
-  - pandas
-  - rasterio
-  - matplotlib
-  - pyproj
-  - proj-data
-  - varname
-  - scipy
-  - scikit-image
-  - scikit-learn
-  - jupyterlab
-  - geopandas
-  - coverage
+  - pytest
+  - typeguard
+  - scikit-optimize
+  - pip
+  - pip:
+    - -e .
