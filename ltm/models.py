@@ -1,3 +1,46 @@
+"""Performs hyperparameter search for multiple models and evaluates the best
+model.
+
+Searches for the best hyperparameters for multiple models using randomized search The search results can be used to compare the performance of different models. The model performance can be compared visually using cv_predict().
+
+Typical usage example:
+
+    from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
+    from sklearn.metrics import make_scorer, mean_absolute_error, mean_squared_error
+
+    X, band_names = load_multi_band_raster("X.tif")
+    y, _ = load_multi_band_raster("y.tif")
+    X, y = drop_nan(X, y)
+
+    search_space = {
+        RandomForestRegressor(): {
+            "n_estimators": [100, 200, 300],
+        },
+        ExtraTreesRegressor(): {
+            "max_depth": [5, 10, 15],
+        },
+    }
+
+    scorers = {
+        "mse": make_scorer(mean_squared_error, greater_is_better=False),
+        "mae": make_scorer(mean_absolute_error, greater_is_better=False),
+    }
+
+    # Perform hyperparameter search
+    search_results = hyperparam_search(X, y, search_space, scorers, refit="r2")
+
+    score_df = best_scores(search_results, scorers)
+
+    cv_predict(
+        search_results,
+        X_path,
+        y_path,
+        rgb_bands=["B4", "B3", "B2"],
+        kfold_n_splits=5,
+        kfold_from_endmembers=True,
+        random_state=42,
+    )
+"""
 from collections import defaultdict
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 

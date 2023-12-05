@@ -1,3 +1,19 @@
+"""Loads, manipulates, and analyzes multi-band raster data.
+
+The data is loaded as a numpy array with shape (num_rows, num_bands). The band names are stored in a list of strings. The data can be manipulated using the functions interpolate_X_and_bands, drop_nan, dendrogram_dim_red, and permutation_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
+
+Typical usage example:
+
+    X, band_names = load_multi_band_raster("path/to/image.tif")
+    X, band_names = interpolate_X_and_bands(X, band_names)
+    X, band_names = drop_nan(X, band_names)
+    similarity_matrix = get_similarity_matrix(X, band_names)
+    show_similarity_matrix(similarity_matrix)
+    show_dendrogram(similarity_matrix)
+    X, band_names = dendrogram_dim_red(X, band_names, similarity_matrix, threshold=0.5)
+    X, band_names = permutation_dim_red(X, band_names, y, threshold=0.01)
+    save_raster(X, band_names, "path/to/image.tif", "path/to/image.tif")
+"""
 import os
 from collections import defaultdict
 from typing import Callable, List, Optional, Tuple
@@ -9,11 +25,10 @@ import rasterio
 from scipy.cluster import hierarchy
 from scipy.cluster.hierarchy import dendrogram, ward
 from scipy.spatial.distance import squareform
-from scipy.stats import kendalltau, pearsonr, spearmanr
+from scipy.stats import spearmanr
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import ConfusionMatrixDisplay
 from tqdm import tqdm
 from typeguard import typechecked
 

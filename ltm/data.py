@@ -1,8 +1,22 @@
-"""This module contains functions for processing satellite data for leaf type
-mixture analysis.
+"""Functions for processing satellite data for leaf type mixture analysis.
 
-Functions:
-- sentinel_composite: Creates a composite from many Sentinel 2 satellite images for a given plot.
+Google Earth Engine is used to retrieve Sentinel 2 satellite images and compute
+composites. The composites are saved as GeoTIFFs. The composites can be used as
+input data for machine learning models. The labels are computed from plot data
+on the individual tree level and saved as GeoTIFFs. The labels can be used as
+target data for machine learning models.
+
+Typical usage example:
+
+    from ltm.data import sentinel_composite
+    import pandas as pd
+
+    plot = pd.read_csv("plot.csv")
+
+    X_path, y_path = sentinel_composite(
+        plot=plot,
+        time_window=("2020-01-01", "2020-12-31"),
+    )
 """
 
 import datetime
@@ -94,10 +108,10 @@ def _save_image(
     try:
         image_response = _download_image(image, scale, crs)
         mask_response = _download_image(image.mask(), scale, crs)
-    except ee.ee_exception.EEException:
+    except ee.ee_exception.EEException as exc:
         raise ValueError(
             "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog."
-        )
+        ) from exc
 
     if image_response.status_code == mask_response.status_code == 200:
         _image_response2file(
