@@ -7,8 +7,12 @@ import pandas as pd
 import rasterio
 from sklearn.base import RegressorMixin
 from sklearn.metrics._scorer import _BaseScorer, _PredictScorer
-from sklearn.model_selection import (BaseCrossValidator, KFold,
-                                     RandomizedSearchCV, cross_val_predict)
+from sklearn.model_selection import (
+    BaseCrossValidator,
+    KFold,
+    RandomizedSearchCV,
+    cross_val_predict,
+)
 from skopt import BayesSearchCV
 from typeguard import typechecked
 
@@ -21,11 +25,12 @@ class _EndMemberSplitter(BaseCrossValidator):
         self,
         n_splits: int = 5,
         shuffle: bool = False,
-        random_state: Optional[int] = None
+        random_state: Optional[int] = None,
     ) -> None:
         self.n_splits = n_splits
-        self.k_fold = KFold(n_splits=n_splits, shuffle=shuffle,
-                            random_state=random_state)
+        self.k_fold = KFold(
+            n_splits=n_splits, shuffle=shuffle, random_state=random_state
+        )
 
     def split(
         self,
@@ -34,14 +39,14 @@ class _EndMemberSplitter(BaseCrossValidator):
         groups: Optional[np.ndarray] = None,
     ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         for train, test in self.k_fold.split(X, y):
-            indices = np.where((y[train] == 0)
-                               | (y[train] == 1))[0]
+            indices = np.where((y[train] == 0) | (y[train] == 1))[0]
 
             end_member_train = train[indices]
 
             if end_member_train.shape[0] == 0:
                 raise ValueError(
-                    "No end members in one training set. Maybe you are just unlucky, try another random state.")
+                    "No end members in one training set. Maybe you are just unlucky, try another random state."
+                )
 
             yield end_member_train, test
 
@@ -56,9 +61,7 @@ class _EndMemberSplitter(BaseCrossValidator):
 
 @typechecked
 def _y2raster(
-    y: np.ndarray,
-    indices: np.ndarray,
-    plot_shape: Tuple[int, int, int]
+    y: np.ndarray, indices: np.ndarray, plot_shape: Tuple[int, int, int]
 ) -> np.ndarray:
     if len(y.shape) == 1:
         y = np.expand_dims(y, axis=1)
@@ -67,16 +70,15 @@ def _y2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = y
-    raster = raster.reshape(
-        plot_shape[1], plot_shape[2], plot_shape[0]).transpose(2, 0, 1)
+    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
+        2, 0, 1
+    )
 
     return raster
 
 
 @typechecked
-def area2mixture_scorer(
-    scorer: _BaseScorer
-) -> _BaseScorer:
+def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     """Modifies the score function of a scorer to use the computed leaf type mixture from leaf type areas.
 
     Args:
@@ -88,7 +90,9 @@ def area2mixture_scorer(
     """
     score_func = scorer._score_func
 
-    def mixture_score_func(y_true: np.ndarray, y_pred: np.ndarray, *args, **kwargs) -> Callable:
+    def mixture_score_func(
+        y_true: np.ndarray, y_pred: np.ndarray, *args, **kwargs
+    ) -> Callable:
         # broadleaf is 0, conifer is 1
         y_true = y_true[:, 0] / (y_true[:, 0] + y_true[:, 1])
         y_pred = y_pred[:, 0] / (y_pred[:, 0] + y_pred[:, 1])
@@ -132,8 +136,7 @@ def hyperparam_search(
     """
     # Use custom kfold splitter if kfold_from_endmembers is True
     if kfold_from_endmembers:
-        cv = _EndMemberSplitter(
-            kfold_n_splits, shuffle=True, random_state=random_state)
+        cv = _EndMemberSplitter(kfold_n_splits, shuffle=True, random_state=random_state)
     else:
         cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
 
@@ -178,23 +181,27 @@ def best_scores(
     """
     # Check if all models have different names
     model_names = [
-        result.best_estimator_.__class__.__name__ for result in search_results]
+        result.best_estimator_.__class__.__name__ for result in search_results
+    ]
     if len(set(model_names)) != len(model_names):
         raise ValueError(
-            "All models must be of different kind, as they are used as keys in the dictionary.")
+            "All models must be of different kind, as they are used as keys in the dictionary."
+        )
 
     # Extract the scores of each metric for each model at best_index
     df_dict = defaultdict(list)
     for metric_name, scorer in scoring.items():
         for result in search_results:
             best_index = np.nonzero(
-                result.cv_results_[f"rank_test_{metric_name}"] == 1)[0][0]
+                result.cv_results_[f"rank_test_{metric_name}"] == 1
+            )[0][0]
             df_dict[metric_name].append(
-                result.cv_results_["mean_test_" + metric_name][best_index] * scorer._sign)
+                result.cv_results_["mean_test_" + metric_name][best_index]
+                * scorer._sign
+            )
 
     # Create a new dataframe with the scores
-    df = pd.DataFrame(df_dict,
-                      index=model_names)
+    df = pd.DataFrame(df_dict, index=model_names)
 
     return df
 
@@ -236,7 +243,9 @@ def cv_predict(
     if y.shape[1] == 1:
         y = y.ravel()
     elif kfold_from_endmembers:
-        print("Warning: Using kfold_from_endmembers with area per leaf type as labels is experimental.")
+        print(
+            "Warning: Using kfold_from_endmembers with area per leaf type as labels is experimental."
+        )
 
     with rasterio.open(y_path) as src:
         bands = src.descriptions
@@ -248,8 +257,7 @@ def cv_predict(
 
     # Use custom kfold splitter if kfold_from_endmembers is True
     if kfold_from_endmembers:
-        cv = _EndMemberSplitter(
-            kfold_n_splits, shuffle=True, random_state=random_state)
+        cv = _EndMemberSplitter(kfold_n_splits, shuffle=True, random_state=random_state)
     else:
         cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
 
@@ -257,8 +265,7 @@ def cv_predict(
     plots = []
     rgb_plots = []
     for result in search_results:
-        y_pred = cross_val_predict(
-            result.best_estimator_, X, y, cv=cv)
+        y_pred = cross_val_predict(result.best_estimator_, X, y, cv=cv)
 
         plot = _y2raster(y_pred, indices_array, shape)
         plots.append(plot)
@@ -270,8 +277,9 @@ def cv_predict(
     rgb_gt_plot = raster2rgb(gt_plot, bands, rgb_bands)
 
     # Prepare plots for plotting by normalizing and removing nan
-    maximum = np.nanmax([np.nanmax(rgb_plot)
-                        for rgb_plot in rgb_plots] + [np.nanmax(rgb_gt_plot)])
+    maximum = np.nanmax(
+        [np.nanmax(rgb_plot) for rgb_plot in rgb_plots] + [np.nanmax(rgb_gt_plot)]
+    )
 
     rgb_gt_plot = rgb_gt_plot / maximum
     rgb_plots = [rgb_plot / maximum for rgb_plot in rgb_plots]
@@ -304,7 +312,7 @@ def cv_predict(
         ax.imshow(rgb_plot, interpolation="nearest")
         ax.set_title(result.best_estimator_.__class__.__name__)
 
-    for ax in axs[len(rgb_plots):]:
+    for ax in axs[len(rgb_plots) :]:
         ax.axis("off")
 
     plt.show()

@@ -8,6 +8,7 @@ dependencies:
   - pytest
   - typeguard
   - scikit-optimize
+  - black
   - pip
   - pip:
     - -e .

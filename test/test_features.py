@@ -10,10 +10,16 @@ def X_path(tmp_path):
     X = np.random.rand(10, 20, 30)
     X_file = tmp_path / "X.tif"
     with rasterio.open(
-        X_file, "w", driver="GTiff", height=X.shape[1], width=X.shape[2], count=X.shape[0], dtype=X.dtype
+        X_file,
+        "w",
+        driver="GTiff",
+        height=X.shape[1],
+        width=X.shape[2],
+        count=X.shape[0],
+        dtype=X.dtype,
     ) as dst:
         dst.write(X)
-        dst.descriptions = tuple(f'Mean B{i+1}' for i in range(X.shape[0]))
+        dst.descriptions = tuple(f"Mean B{i+1}" for i in range(X.shape[0]))
     return str(X_file)
 
 
@@ -22,7 +28,13 @@ def y_path(tmp_path):
     y = np.random.rand(10, 20)
     y_file = tmp_path / "y.tif"
     with rasterio.open(
-        y_file, "w", driver="GTiff", height=y.shape[0], width=y.shape[1], count=1, dtype=y.dtype
+        y_file,
+        "w",
+        driver="GTiff",
+        height=y.shape[0],
+        width=y.shape[1],
+        count=1,
+        dtype=y.dtype,
     ) as dst:
         dst.write(y, 1)
 

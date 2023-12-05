@@ -8,30 +8,31 @@ from scipy.stats import loguniform, randint, uniform
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import (make_scorer, mean_squared_error,
-                             median_absolute_error)
+from sklearn.metrics import make_scorer, mean_squared_error, median_absolute_error
 from sklearn.model_selection import RandomizedSearchCV
 
-from src.models import (_EndMemberSplitter, best_scores, cv_predict,
-                        hyperparam_search)
+from src.models import _EndMemberSplitter, best_scores, cv_predict, hyperparam_search
 
 
 class TestModels(unittest.TestCase):
     def setUp(self):
-        self.X, self.y = make_regression(
-            n_samples=100, n_features=10, random_state=42)
+        self.X, self.y = make_regression(n_samples=100, n_features=10, random_state=42)
         self.search_space = {
             ELMRegressor(): {
                 "alpha": loguniform(1e-8, 1e5),
                 "include_original_features": [True, False],
-                "n_neurons": loguniform(1, 100-1),
+                "n_neurons": loguniform(1, 100 - 1),
                 "ufunc": ["tanh", "sigm", "relu", "lin"],
                 "density": uniform(0.01, 0.99),
             },
         }
         self.scoring = {
-            "median_absolute_error": make_scorer(median_absolute_error, greater_is_better=False),
-            "mean_squared_error": make_scorer(mean_squared_error, greater_is_better=False),
+            "median_absolute_error": make_scorer(
+                median_absolute_error, greater_is_better=False
+            ),
+            "mean_squared_error": make_scorer(
+                mean_squared_error, greater_is_better=False
+            ),
         }
         self.refit = "mean_squared_error"
 
@@ -48,8 +49,7 @@ class TestModels(unittest.TestCase):
         self.assertIsInstance(results, list)
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], RandomizedSearchCV)
-        self.assertIsInstance(
-            results[0].best_estimator_, ELMRegressor)
+        self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
 
     def test_reproducible_seed(self):
         results1 = hyperparam_search(
@@ -70,8 +70,10 @@ class TestModels(unittest.TestCase):
             kfold_from_endmembers=False,
             random_state=42,
         )
-        self.assertEqual(results1[0].best_estimator_.get_params(
-        ), results2[0].best_estimator_.get_params())
+        self.assertEqual(
+            results1[0].best_estimator_.get_params(),
+            results2[0].best_estimator_.get_params(),
+        )
 
     def test_best_scores(self):
         results = hyperparam_search(

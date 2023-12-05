@@ -1,4 +1,3 @@
-
 """
 This module contains functions for processing satellite data for leaf type mixture analysis.
 
@@ -28,18 +27,21 @@ def _split_time_window(
     time_window: Tuple[str, str],
     num_splits: int,
 ) -> List[Tuple[str, str]]:
-    start = datetime.datetime.strptime(time_window[0], '%Y-%m-%d')
-    end = datetime.datetime.strptime(time_window[1], '%Y-%m-%d')
+    start = datetime.datetime.strptime(time_window[0], "%Y-%m-%d")
+    end = datetime.datetime.strptime(time_window[1], "%Y-%m-%d")
     delta = (end - start + datetime.timedelta(days=1)) / num_splits
 
     if delta.days < 1:
         raise ValueError(
-            f"Time window {time_window} is too small to split into {num_splits} sub windows")
+            f"Time window {time_window} is too small to split into {num_splits} sub windows"
+        )
 
     sub_windows = []
     for i in range(num_splits):
-        sub_window = ((start + i * delta).strftime('%Y-%m-%d'),
-                      (start + (i + 1) * delta - datetime.timedelta(days=1)).strftime('%Y-%m-%d'))
+        sub_window = (
+            (start + i * delta).strftime("%Y-%m-%d"),
+            (start + (i + 1) * delta - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
+        )
         sub_windows.append(sub_window)
 
     return sub_windows
@@ -92,17 +94,21 @@ def _save_image(
         mask_response = _download_image(image.mask(), scale, crs)
     except ee.ee_exception.EEException:
         raise ValueError(
-            "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog.")
+            "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog."
+        )
 
     if image_response.status_code == mask_response.status_code == 200:
-        _image_response2file(image_response.content,
-                             file_path,
-                             mask=mask_response.content,
-                             bands=image.bandNames().getInfo())
+        _image_response2file(
+            image_response.content,
+            file_path,
+            mask=mask_response.content,
+            bands=image.bandNames().getInfo(),
+        )
         print(f"GeoTIFF saved as {file_path}")
     else:
         print(
-            f"FAILED to either compute or download the image for {file_path} most likely due to limits of Google Earth Engine.")
+            f"FAILED to either compute or download the image for {file_path} most likely due to limits of Google Earth Engine."
+        )
 
 
 @typechecked
@@ -126,11 +132,7 @@ def _mask_s2_clouds(
     cirrus_bit_mask = 1 << 11
 
     # Both flags should be set to zero, indicating clear conditions.
-    mask = (
-        qa.bitwiseAnd(cloud_bit_mask)
-        .eq(0)
-        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    )
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
 
     return image.updateMask(mask).divide(10000)
 
@@ -242,7 +244,7 @@ def show_timeseries(
         # normalize values and apply gamma correction
         rgb_raster -= min_value
         rgb_raster /= max_value - min_value
-        rgb_raster **= (1 / 2.2)
+        rgb_raster **= 1 / 2.2
         rgb_raster[np.isnan(rgb_raster)] = 0
         ax.imshow(rgb_raster)
         ax.set_title(f"{i} {reducer}")
@@ -320,35 +322,37 @@ def sentinel_composite(
 
     # Ensure proper time window format and convert to strings
     date_format = "%Y-%m-%d"
-    time_window = tuple(datetime.datetime.strptime(
-        date, date_format) if isinstance(date, str) else date for date in time_window)
+    time_window = tuple(
+        datetime.datetime.strptime(date, date_format) if isinstance(date, str) else date
+        for date in time_window
+    )
     time_window = tuple(date.strftime(date_format) for date in time_window)
     start, end = time_window
     if start > end:
-        raise ValueError(
-            f"start ({start}) must be before end ({end}) of timewindow")
+        raise ValueError(f"start ({start}) must be before end ({end}) of timewindow")
 
     # Ensure proper path format
     X_pathlib = Path(X_path)
     y_pathlib = Path(y_path)
     if X_pathlib.suffix != ".tif" or y_pathlib.suffix != ".tif":
-        raise ValueError(
-            "X_path and y_path must be strings ending in .tif")
+        raise ValueError("X_path and y_path must be strings ending in .tif")
     if not X_pathlib.parent.exists():
-        raise ValueError(
-            f"X_path parent directory does not exist: {X_pathlib.parent}")
+        raise ValueError(f"X_path parent directory does not exist: {X_pathlib.parent}")
     if not y_pathlib.parent.exists():
-        raise ValueError(
-            f"y_path parent directory does not exist: {y_pathlib.parent}")
+        raise ValueError(f"y_path parent directory does not exist: {y_pathlib.parent}")
 
     # Check if indices are valid eemont indices
     if indices is not None:
-        invalid_indices = [index for index in indices
-                           if index not in eemont.common.indices()
-                           or "Sentinel-2" not in eemont.common.indices()[index]["platforms"]]
+        invalid_indices = [
+            index
+            for index in indices
+            if index not in eemont.common.indices()
+            or "Sentinel-2" not in eemont.common.indices()[index]["platforms"]
+        ]
         if invalid_indices:
             raise ValueError(
-                f"Invalid indices not in eemont package: {', '.join(invalid_indices)}")
+                f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
+            )
 
     # Split time window into sub windows
     time_windows = _split_time_window(time_window, num_composites)
@@ -357,8 +361,7 @@ def sentinel_composite(
     if temporal_reducers is None:
         temporal_reducers = ["mean"]
     if len(set(temporal_reducers)) < len(temporal_reducers):
-        raise ValueError(
-            "temporal_reducers must not contain duplicate reducers")
+        raise ValueError("temporal_reducers must not contain duplicate reducers")
 
     # Check if all reducers are valid
     valid_reducers = set()
@@ -368,51 +371,88 @@ def sentinel_composite(
                 valid_reducers.add(attr)
         except (TypeError, ee.ee_exception.EEException):
             continue
-    invalid_reducers = [reducer for reducer in temporal_reducers
-                        if reducer not in valid_reducers]
+    invalid_reducers = [
+        reducer for reducer in temporal_reducers if reducer not in valid_reducers
+    ]
     if invalid_reducers:
         raise ValueError(
-            f"Invalid reducers not in ee.Reducer: {', '.join(invalid_reducers)}")
+            f"Invalid reducers not in ee.Reducer: {', '.join(invalid_reducers)}"
+        )
 
     # Check if all bands are valid. Use all bands if sentinel_bands is None
     if level_2a:
-        available_bands = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B9", "B11",
-                           "B12", "AOT", "WVP", "SCL", "TCI_R", "TCI_G", "TCI_B", "MSK_CLDPRB", "MSK_SNWPRB"]
+        available_bands = [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B8A",
+            "B9",
+            "B11",
+            "B12",
+            "AOT",
+            "WVP",
+            "SCL",
+            "TCI_R",
+            "TCI_G",
+            "TCI_B",
+            "MSK_CLDPRB",
+            "MSK_SNWPRB",
+        ]
     else:
-        available_bands = ["B1", "B2", "B3", "B4", "B5",
-                           "B6", "B7", "B8", "B8A", "B9", "B10", "B11", "B12"]
+        available_bands = [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B8A",
+            "B9",
+            "B10",
+            "B11",
+            "B12",
+        ]
 
     if sentinel_bands is None:
         sentinel_bands = available_bands
     else:
         illegal_bands = [b for b in sentinel_bands if b not in available_bands]
         if any(illegal_bands):
-            raise ValueError(
-                f"{illegal_bands} not available in: {available_bands}")
+            raise ValueError(f"{illegal_bands} not available in: {available_bands}")
 
     # Get region of interest (ROI)
-    roi = ee.Geometry.Rectangle([
-        plot["longitude"].min(),
-        plot["latitude"].min(),
-        plot["longitude"].max(),
-        plot["latitude"].max(),
-    ]).buffer(plot["dbh"].max() / 2)
+    roi = ee.Geometry.Rectangle(
+        [
+            plot["longitude"].min(),
+            plot["latitude"].min(),
+            plot["longitude"].max(),
+            plot["latitude"].max(),
+        ]
+    ).buffer(plot["dbh"].max() / 2)
 
     # Check if rectangle has reasonable size
     if roi.area().getInfo() == 0:
         raise ValueError(
-            "Plot bounding box has area 0. Check if plot coordinates are valid.")
+            "Plot bounding box has area 0. Check if plot coordinates are valid."
+        )
     if roi.area().getInfo() > 1e7:
         raise ValueError(
-            "Plot bounding box has area > 1e7. Check if plot coordinates are valid.")
+            "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
+        )
 
     # Get CRS in epsg format for center of the roi
     longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
     zone_number = utm.latlon_to_zone_number(latitude, longitude)
     is_south = utm.latitude_to_zone_letter(latitude) < "N"
 
-    crs = CRS.from_dict(
-        {"proj": "utm", "zone": zone_number, "south": is_south})
+    crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
     crs = ":".join(crs.to_authority())
 
     # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
@@ -448,8 +488,10 @@ def sentinel_composite(
             s2 = s2.spectralIndices(indices)
 
         # Reduce by temporal_reducers
-        reduced_images = [s2.reduce(getattr(ee.Reducer, temporal_reducer)())
-                          for temporal_reducer in temporal_reducers]
+        reduced_images = [
+            s2.reduce(getattr(ee.Reducer, temporal_reducer)())
+            for temporal_reducer in temporal_reducers
+        ]
 
         # Combine reduced_images into one image
         datum = ee.ImageCollection(reduced_images).toBands()
@@ -482,10 +524,12 @@ def sentinel_composite(
     broadleafs = []
     conifers = []
     for _, row in plot.iterrows():
-        circle = ee.Geometry.Point([
-            row["longitude"],
-            row["latitude"],
-        ]).buffer(row["dbh"] / 2)
+        circle = ee.Geometry.Point(
+            [
+                row["longitude"],
+                row["latitude"],
+            ]
+        ).buffer(row["dbh"] / 2)
 
         if row["broadleaf"]:
             broadleafs.append(circle)
@@ -500,7 +544,8 @@ def sentinel_composite(
     fine_scale = min(fine_scale, 10)
     if plot["dbh"].min() < 0.05:
         print(
-            "Info: DBH < 0.05 m found. Small trees might be ignored by Google Earth Engine.")
+            "Info: DBH < 0.05 m found. Small trees might be ignored by Google Earth Engine."
+        )
         fine_scale = 0.25
 
     # Compute broadleaf area
@@ -508,14 +553,14 @@ def sentinel_composite(
     broadleaf_area = ee.Image.constant(scale**2).multiply(broadleaf_area)
     broadleaf_area = broadleaf_area.reproject(scale=fine_scale, crs=crs)
     broadleaf_area = broadleaf_area.reduceResolution(
-        ee.Reducer.mean(), maxPixels=10_000)
+        ee.Reducer.mean(), maxPixels=10_000
+    )
 
     # Compute conifer area
     conifer_area = ee.Image.constant(1).clip(conifers).mask()
     conifer_area = ee.Image.constant(scale**2).multiply(conifer_area)
     conifer_area = conifer_area.reproject(scale=fine_scale, crs=crs)
-    conifer_area = conifer_area.reduceResolution(
-        ee.Reducer.mean(), maxPixels=10_000)
+    conifer_area = conifer_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
 
     # Compute y (leaf type mixture) from broadleaf_area and conifer_area
     if areas_as_y:

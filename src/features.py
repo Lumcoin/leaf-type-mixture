@@ -38,11 +38,9 @@ def load_multi_band_raster(
     # Check if all paths are valid
     for path in raster_path:
         if not path.endswith(".tif"):
-            raise ValueError(
-                f"Expected path to .tif file, got '{path}' instead.")
+            raise ValueError(f"Expected path to .tif file, got '{path}' instead.")
         if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Could not find file '{path}'.")
+            raise FileNotFoundError(f"Could not find file '{path}'.")
 
     data = None
     band_names = []
@@ -58,16 +56,14 @@ def load_multi_band_raster(
         if data is None:
             # Check if band names are unique
             if len(set(band_names)) != len(band_names):
-                raise ValueError(
-                    "All band names must be unique.")
+                raise ValueError("All band names must be unique.")
 
             data = curr_data
             band_names = curr_band_names
         else:
             # Check if band names are the same
             if band_names != curr_band_names:
-                raise ValueError(
-                    "All band names must be the same.")
+                raise ValueError("All band names must be the same.")
 
             data = np.vstack((data, curr_data))
 
@@ -121,8 +117,7 @@ def interpolate_X_and_bands(
     # Reshape back into original shape
     interpolated_X = df.values.T.reshape(-1, num_bands, num_composites)
     interpolated_X = interpolated_X.transpose(0, 2, 1)
-    interpolated_X = interpolated_X.reshape(-1,
-                                            num_bands * num_composites)
+    interpolated_X = interpolated_X.reshape(-1, num_bands * num_composites)
 
     return interpolated_X, band_names
 
@@ -230,11 +225,9 @@ def drop_nan(
     """
     # Check if all arrays have the same number of rows and at max two dimensions
     if len(set(array.shape[0] for array in arrays)) != 1:
-        raise ValueError(
-            "All arrays must have the same number of rows.")
+        raise ValueError("All arrays must have the same number of rows.")
     if any(len(array.shape) > 2 for array in arrays):
-        raise ValueError(
-            "All arrays must have at max two dimensions.")
+        raise ValueError("All arrays must have at max two dimensions.")
 
     # Drop rows with NaN values
     mask = np.full(arrays[0].shape[0], fill_value=True)
@@ -247,7 +240,8 @@ def drop_nan(
     # Raise an error if all rows are dropped
     if not mask.any():
         raise ValueError(
-            "All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?")
+            "All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?"
+        )
 
     # Prepare result
     result = tuple(array[mask] for array in arrays)
@@ -281,19 +275,18 @@ def get_similarity_matrix(
     """
     # Check if X has two dimensions
     if len(X.shape) != 2:
-        raise ValueError(
-            "X must have two dimensions.")
+        raise ValueError("X must have two dimensions.")
 
     # Check if all band names are unique
     if len(set(band_names)) != len(band_names):
-        raise ValueError(
-            "All band names must be unique.")
+        raise ValueError("All band names must be unique.")
 
     # Check if method is valid
     valid_methods = ["pearson", "spearman", "mutual_info"]
     if method not in valid_methods:
         raise ValueError(
-            f"Method must be one of {', '.join(valid_methods)}. Got '{method}' instead.")
+            f"Method must be one of {', '.join(valid_methods)}. Got '{method}' instead."
+        )
 
     # Calculate similarity matrix
     if method == "pearson":
@@ -302,14 +295,16 @@ def get_similarity_matrix(
         similarity_matrix = spearmanr(X).correlation
     elif method == "mutual_info":
         # EXPERIMENTAL, most likely scientifically wrong
-        n_neighbors = min(3, X.shape[0]-1)
+        n_neighbors = min(3, X.shape[0] - 1)
         similarity_matrix = np.full((X.shape[1], X.shape[1]), np.nan)
         for i, band_1 in tqdm(enumerate(X.T)):
             for j, band_2 in enumerate(X.T):
-                similarity_matrix[i, j] = mutual_info_regression(band_1.reshape(-1, 1),
-                                                                 band_2,
-                                                                 n_neighbors=n_neighbors,
-                                                                 random_state=seed)[0]
+                similarity_matrix[i, j] = mutual_info_regression(
+                    band_1.reshape(-1, 1),
+                    band_2,
+                    n_neighbors=n_neighbors,
+                    random_state=seed,
+                )[0]
         # Esoteric way to achieve a diagonal of 1s
         entropy = np.zeros_like(similarity_matrix)
         for i in range(similarity_matrix.shape[0]):
@@ -323,7 +318,8 @@ def get_similarity_matrix(
     # Raise error if similarity matrix is NaN
     if similarity_matrix is np.nan:
         raise ValueError(
-            f"Could not compute similarity matrix... This commonly occurs if a band has deviation of zero")
+            f"Could not compute similarity matrix... This commonly occurs if a band has deviation of zero"
+        )
 
     # Ensure the similarity matrix is normalized, symmetric, with diagonal of ones
     similarity_matrix = abs(similarity_matrix)
@@ -334,7 +330,8 @@ def get_similarity_matrix(
 
     # Convert to pandas DataFrame
     similarity_matrix = pd.DataFrame(
-        similarity_matrix, columns=band_names, index=band_names)
+        similarity_matrix, columns=band_names, index=band_names
+    )
 
     return similarity_matrix
 
@@ -352,20 +349,21 @@ def show_similarity_matrix(
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
         raise TypeError(
-            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead.")
+            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
+        )
 
     # Check if similarity matrix is square
     if similarity_matrix.shape[0] != similarity_matrix.shape[1]:
-        raise ValueError(
-            "Similarity matrix must be square.")
+        raise ValueError("Similarity matrix must be square.")
 
     # Show similarity matrix
-    fig, ax = plt.subplots(figsize=(
-        similarity_matrix.columns.shape[0]*0.3,
-        similarity_matrix.columns.shape[0]*0.3,
-    ))
-    image = ax.imshow(similarity_matrix,
-                      interpolation="nearest", vmin=0, vmax=1)
+    fig, ax = plt.subplots(
+        figsize=(
+            similarity_matrix.columns.shape[0] * 0.3,
+            similarity_matrix.columns.shape[0] * 0.3,
+        )
+    )
+    image = ax.imshow(similarity_matrix, interpolation="nearest", vmin=0, vmax=1)
     fig.colorbar(image)
     ax.set_xticks(range(similarity_matrix.columns.shape[0]))
     ax.set_yticks(range(similarity_matrix.columns.shape[0]))
@@ -391,22 +389,19 @@ def show_dendrogram(
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
         raise TypeError(
-            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead.")
+            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
+        )
 
     # Check if similarity matrix is square
     if similarity_matrix.shape[0] != similarity_matrix.shape[1]:
-        raise ValueError(
-            "Similarity matrix must be square.")
+        raise ValueError("Similarity matrix must be square.")
 
     # Show dendrogram
     fig, ax = plt.subplots(figsize=(16, 16))
     distance_matrix = 1 - similarity_matrix
     dist_linkage = ward(squareform(distance_matrix))
     dendro = dendrogram(
-        dist_linkage,
-        labels=similarity_matrix.columns,
-        ax=ax,
-        leaf_rotation=90
+        dist_linkage, labels=similarity_matrix.columns, ax=ax, leaf_rotation=90
     )
 
     return ax
@@ -441,15 +436,15 @@ def dendrogram_dim_red(
     columns = list(similarity_matrix.columns)
     if index != band_names or columns != band_names:
         raise ValueError(
-            "Similarity matrix must be square with band_names as index and columns.")
+            "Similarity matrix must be square with band_names as index and columns."
+        )
 
     # Compute linkage
     distance_matrix = 1 - similarity_matrix
     dist_linkage = hierarchy.ward(squareform(distance_matrix))
 
     # Compute clusters
-    cluster_ids = hierarchy.fcluster(
-        dist_linkage, threshold, criterion="distance")
+    cluster_ids = hierarchy.fcluster(dist_linkage, threshold, criterion="distance")
     cluster_id_to_band_ids = defaultdict(list)
     for idx, cluster_id in enumerate(cluster_ids):
         cluster_id_to_band_ids[cluster_id].append(idx)
@@ -503,7 +498,8 @@ def permutation_dim_red(
     forest_importances = forest_importances[forest_importances >= threshold]
 
     selected_band_names = list(forest_importances.index)
-    selected_X = X[:, [band_names.index(band_name)
-                       for band_name in selected_band_names]]
+    selected_X = X[
+        :, [band_names.index(band_name) for band_name in selected_band_names]
+    ]
 
     return selected_X, selected_band_names
