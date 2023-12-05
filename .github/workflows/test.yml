@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[linting]'
       - name: Lint Code
-        run: python -m pylint --rcfile=.pylintrc **/*.py
+        run: python -m pylint **/*.py
   
   unittest:
     name: Unit Tests
