@@ -22,7 +22,8 @@ from typeguard import typechecked
 def load_multi_band_raster(
     raster_path: str | List[str],
 ) -> Tuple[np.ndarray, List[str]]:
-    """Loads one or many rasters with multiple bands and returns the data ready to use with sklearn and band names.
+    """Loads one or many rasters with multiple bands and returns the data ready
+    to use with sklearn and band names.
 
     Args:
         raster_path:
@@ -38,7 +39,9 @@ def load_multi_band_raster(
     # Check if all paths are valid
     for path in raster_path:
         if not path.endswith(".tif"):
-            raise ValueError(f"Expected path to .tif file, got '{path}' instead.")
+            raise ValueError(
+                f"Expected path to .tif file, got '{path}' instead."
+            )
         if not os.path.exists(path):
             raise FileNotFoundError(f"Could not find file '{path}'.")
 
@@ -366,7 +369,9 @@ def show_similarity_matrix(
             similarity_matrix.columns.shape[0] * 0.3,
         )
     )
-    image = ax.imshow(similarity_matrix, interpolation="nearest", vmin=0, vmax=1)
+    image = ax.imshow(
+        similarity_matrix, interpolation="nearest", vmin=0, vmax=1
+    )
     fig.colorbar(image)
     ax.set_xticks(range(similarity_matrix.columns.shape[0]))
     ax.set_yticks(range(similarity_matrix.columns.shape[0]))
@@ -447,7 +452,9 @@ def dendrogram_dim_red(
     dist_linkage = hierarchy.ward(squareform(distance_matrix))
 
     # Compute clusters
-    cluster_ids = hierarchy.fcluster(dist_linkage, threshold, criterion="distance")
+    cluster_ids = hierarchy.fcluster(
+        dist_linkage, threshold, criterion="distance"
+    )
     cluster_id_to_band_ids = defaultdict(list)
     for idx, cluster_id in enumerate(cluster_ids):
         cluster_id_to_band_ids[cluster_id].append(idx)
@@ -469,7 +476,8 @@ def permutation_dim_red(
     scoring: Optional[Callable] = None,
     seed: Optional[int] = None,
 ) -> Tuple[np.ndarray, List[str]]:
-    """Performs dimensionality reduction by thresholding features based on permutation feature importance on a stock RandomForestRegressor.
+    """Performs dimensionality reduction by thresholding features based on
+    permutation feature importance on a stock RandomForestRegressor.
 
     Args:
         X:

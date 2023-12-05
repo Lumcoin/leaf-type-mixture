@@ -1,5 +1,5 @@
-"""
-This module contains functions for processing satellite data for leaf type mixture analysis.
+"""This module contains functions for processing satellite data for leaf type
+mixture analysis.
 
 Functions:
 - sentinel_composite: Creates a composite from many Sentinel 2 satellite images for a given plot.
@@ -40,7 +40,9 @@ def _split_time_window(
     for i in range(num_splits):
         sub_window = (
             (start + i * delta).strftime("%Y-%m-%d"),
-            (start + (i + 1) * delta - datetime.timedelta(days=1)).strftime("%Y-%m-%d"),
+            (start + (i + 1) * delta - datetime.timedelta(days=1)).strftime(
+                "%Y-%m-%d"
+            ),
         )
         sub_windows.append(sub_window)
 
@@ -132,7 +134,11 @@ def _mask_s2_clouds(
     cirrus_bit_mask = 1 << 11
 
     # Both flags should be set to zero, indicating clear conditions.
-    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0).And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    mask = (
+        qa.bitwiseAnd(cloud_bit_mask)
+        .eq(0)
+        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
+    )
 
     return image.updateMask(mask).divide(10000)
 
@@ -143,7 +149,9 @@ def _prettify_band_name(
 ) -> str:
     composite_idx, _, *band_label, reducer_label = band_name.split("_")
     composite_idx = int(composite_idx) + 1
-    pretty_name = f"{composite_idx} {reducer_label.title()} {'_'.join(band_label)}"
+    pretty_name = (
+        f"{composite_idx} {reducer_label.title()} {'_'.join(band_label)}"
+    )
 
     return pretty_name
 
@@ -271,7 +279,8 @@ def sentinel_composite(
     remove_qa: bool = True,
     areas_as_y: bool = False,
 ) -> Tuple[str, str]:
-    """Creates a composite from many Sentinel 2 satellite images for a given plot.
+    """Creates a composite from many Sentinel 2 satellite images for a given
+    plot.
 
     Args:
         plot:
@@ -323,13 +332,17 @@ def sentinel_composite(
     # Ensure proper time window format and convert to strings
     date_format = "%Y-%m-%d"
     time_window = tuple(
-        datetime.datetime.strptime(date, date_format) if isinstance(date, str) else date
+        datetime.datetime.strptime(date, date_format)
+        if isinstance(date, str)
+        else date
         for date in time_window
     )
     time_window = tuple(date.strftime(date_format) for date in time_window)
     start, end = time_window
     if start > end:
-        raise ValueError(f"start ({start}) must be before end ({end}) of timewindow")
+        raise ValueError(
+            f"start ({start}) must be before end ({end}) of timewindow"
+        )
 
     # Ensure proper path format
     X_pathlib = Path(X_path)
@@ -337,9 +350,13 @@ def sentinel_composite(
     if X_pathlib.suffix != ".tif" or y_pathlib.suffix != ".tif":
         raise ValueError("X_path and y_path must be strings ending in .tif")
     if not X_pathlib.parent.exists():
-        raise ValueError(f"X_path parent directory does not exist: {X_pathlib.parent}")
+        raise ValueError(
+            f"X_path parent directory does not exist: {X_pathlib.parent}"
+        )
     if not y_pathlib.parent.exists():
-        raise ValueError(f"y_path parent directory does not exist: {y_pathlib.parent}")
+        raise ValueError(
+            f"y_path parent directory does not exist: {y_pathlib.parent}"
+        )
 
     # Check if indices are valid eemont indices
     if indices is not None:
@@ -361,7 +378,9 @@ def sentinel_composite(
     if temporal_reducers is None:
         temporal_reducers = ["mean"]
     if len(set(temporal_reducers)) < len(temporal_reducers):
-        raise ValueError("temporal_reducers must not contain duplicate reducers")
+        raise ValueError(
+            "temporal_reducers must not contain duplicate reducers"
+        )
 
     # Check if all reducers are valid
     valid_reducers = set()
@@ -372,7 +391,9 @@ def sentinel_composite(
         except (TypeError, ee.ee_exception.EEException):
             continue
     invalid_reducers = [
-        reducer for reducer in temporal_reducers if reducer not in valid_reducers
+        reducer
+        for reducer in temporal_reducers
+        if reducer not in valid_reducers
     ]
     if invalid_reducers:
         raise ValueError(
@@ -425,7 +446,9 @@ def sentinel_composite(
     else:
         illegal_bands = [b for b in sentinel_bands if b not in available_bands]
         if any(illegal_bands):
-            raise ValueError(f"{illegal_bands} not available in: {available_bands}")
+            raise ValueError(
+                f"{illegal_bands} not available in: {available_bands}"
+            )
 
     # Get region of interest (ROI)
     roi = ee.Geometry.Rectangle(
@@ -560,7 +583,9 @@ def sentinel_composite(
     conifer_area = ee.Image.constant(1).clip(conifers).mask()
     conifer_area = ee.Image.constant(scale**2).multiply(conifer_area)
     conifer_area = conifer_area.reproject(scale=fine_scale, crs=crs)
-    conifer_area = conifer_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
+    conifer_area = conifer_area.reduceResolution(
+        ee.Reducer.mean(), maxPixels=10_000
+    )
 
     # Compute y (leaf type mixture) from broadleaf_area and conifer_area
     if areas_as_y:

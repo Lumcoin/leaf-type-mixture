@@ -43,7 +43,9 @@ def fixture_y_path(tmp_path):
 
 
 def test_load_X_and_band_names(X_path):  # pylint: disable=invalid-name
-    X, band_names = load_multi_band_raster(X_path)  # pylint: disable=invalid-name
+    X, band_names = load_multi_band_raster(
+        X_path
+    )  # pylint: disable=invalid-name
     assert isinstance(X, np.ndarray)
     assert isinstance(band_names, list)
     assert X.shape == (600, 10)

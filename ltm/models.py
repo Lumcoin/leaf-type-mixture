@@ -80,16 +80,17 @@ def _y2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = y
-    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
-        2, 0, 1
-    )
+    raster = raster.reshape(
+        plot_shape[1], plot_shape[2], plot_shape[0]
+    ).transpose(2, 0, 1)
 
     return raster
 
 
 @typechecked
 def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
-    """Modifies the score function of a scorer to use the computed leaf type mixture from leaf type areas.
+    """Modifies the score function of a scorer to use the computed leaf type
+    mixture from leaf type areas.
 
     Args:
         scorer:
@@ -146,7 +147,9 @@ def hyperparam_search(
     """
     # Use custom kfold splitter if kfold_from_endmembers is True
     if kfold_from_endmembers:
-        cv = _EndMemberSplitter(kfold_n_splits, shuffle=True, random_state=random_state)
+        cv = _EndMemberSplitter(
+            kfold_n_splits, shuffle=True, random_state=random_state
+        )
     else:
         cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
 
@@ -226,7 +229,8 @@ def cv_predict(
     kfold_from_endmembers: bool = False,
     random_state: Optional[int] = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
-    """Predicts the labels using cross_val_predict and plots the results for each model.
+    """Predicts the labels using cross_val_predict and plots the results for
+    each model.
 
     Args:
         search_results:
@@ -267,7 +271,9 @@ def cv_predict(
 
     # Use custom kfold splitter if kfold_from_endmembers is True
     if kfold_from_endmembers:
-        cv = _EndMemberSplitter(kfold_n_splits, shuffle=True, random_state=random_state)
+        cv = _EndMemberSplitter(
+            kfold_n_splits, shuffle=True, random_state=random_state
+        )
     else:
         cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
 
@@ -288,7 +294,8 @@ def cv_predict(
 
     # Prepare plots for plotting by normalizing and removing nan
     maximum = np.nanmax(
-        [np.nanmax(rgb_plot) for rgb_plot in rgb_plots] + [np.nanmax(rgb_gt_plot)]
+        [np.nanmax(rgb_plot) for rgb_plot in rgb_plots]
+        + [np.nanmax(rgb_gt_plot)]
     )
 
     rgb_gt_plot = rgb_gt_plot / maximum

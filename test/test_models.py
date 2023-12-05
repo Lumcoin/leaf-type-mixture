@@ -5,7 +5,11 @@ import pandas as pd
 from scipy.stats import loguniform, uniform
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
-from sklearn.metrics import make_scorer, mean_squared_error, median_absolute_error
+from sklearn.metrics import (
+    make_scorer,
+    mean_squared_error,
+    median_absolute_error,
+)
 from sklearn.model_selection import RandomizedSearchCV
 
 from ltm.models import best_scores, hyperparam_search
