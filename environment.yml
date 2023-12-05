@@ -8,8 +8,6 @@ dependencies:
   - scikit-elm
   - scikit-optimize
   - dill
-  - pytest
-  - black
   - pip
   - pip:
     - -e .

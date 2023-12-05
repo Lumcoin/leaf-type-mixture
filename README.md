@@ -3,6 +3,43 @@ Leaf Type Mixture
 
 Leaf type mixture prediction with machine learning from satellite data.
 
+Requires Python>=3.10
+
+If you are new to python, we recommend to install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and create a environment called "ltm" using `conda create -n ltm python=3.10 ipykernel`. You can then activate the environment using `conda activate ltm` and install the "ltm" package of this repository using:
+```bash
+pip install -e .
+```
+
+The "`.`" (dot) in above code cell is no typo, it is the path to the current directory.
+
+Install the ltm package to your active environment:
+```bash
+pip install -e .
+```
+
+The code in this repository is formatted using following commands:
+```bash
+pip install isort docformatter black
+isort --profile black .
+docformatter --in-place --recursive .
+black --line-length 80 .
+```
+
+This repository uses the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) as a style guide for the code. If you dicover any violations, please open an issue.
+
+Check code quality using pylint:
+```bash
+pip install pylint
+pylint --disable=line-too-long ltm
+```
+
+Check test coverage using coverage.py:
+```bash
+pip install coverage
+coverage run -m pytest
+coverage report -m
+```
+
 Reinstall conda environment:
 ```bash
 ~/mambaforge/Scripts/activate.bat
