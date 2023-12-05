@@ -30,7 +30,7 @@ This repository uses the [Google Python Style Guide](https://google.github.io/st
 Check code quality using pylint:
 ```bash
 pip install pylint
-pylint --disable=line-too-long ltm
+pylint --disable=line-too-long **/*.py
 ```
 
 Check test coverage using coverage.py:

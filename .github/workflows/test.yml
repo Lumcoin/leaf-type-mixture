@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[linting]'
       - name: Lint Code
-        run: python -m pylint **/*.py
+        run: python -m pylint --disable=line-too-long **/*.py
   
   unittest:
     name: Unit Tests
@@ -49,4 +49,4 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[testing]'
       - name: Run Tests
-        run: pytest
+        run: python -m pytest
