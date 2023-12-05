@@ -8,7 +8,6 @@ setup(
     author="Peter Hofinger",
     license="MIT",
     install_requires=[
-        "dask",
         "ee",
         "eemont",
         "rasterio",
@@ -29,6 +28,8 @@ setup(
             "pylint",
         ],
         "testing": [
+            "dask",
+            "distributed",
             "pytest",
             "scikit-elm",
         ],
