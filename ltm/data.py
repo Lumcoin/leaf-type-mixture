@@ -21,7 +21,7 @@ Typical usage example:
 
 import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import ee
 import eemont
@@ -213,7 +213,7 @@ def split_band_name(
 def show_timeseries(
     raster_path: str,
     reducer: str,
-    rgb_bands: Optional[List[str]] = None,
+    rgb_bands: List[str] | None = None,
 ) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
     # Read raster and get band names
     with rasterio.open(raster_path) as src:
@@ -285,10 +285,10 @@ def sentinel_composite(
     X_path: str = "../data/processed/X.tif",
     y_path: str = "../data/processed/y.tif",
     num_composites: int = 1,
-    temporal_reducers: Optional[List[str]] = None,
-    indices: Optional[List[str]] = None,
+    temporal_reducers: List[str] | None = None,
+    indices: List[str] | None = None,
     level_2a: bool = False,
-    sentinel_bands: Optional[List[str]] = None,
+    sentinel_bands: List[str] | None = None,
     remove_clouds: bool = True,
     remove_qa: bool = True,
     areas_as_y: bool = False,

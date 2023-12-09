@@ -42,7 +42,7 @@ Typical usage example:
     )
 """
 from collections import defaultdict
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Generator, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -78,7 +78,7 @@ class _EndMemberSplitter(BaseCrossValidator):
         self,
         n_splits: int = 5,
         shuffle: bool = False,
-        random_state: Optional[int] = None,
+        random_state: int | None = None,
     ) -> None:
         self.n_splits = n_splits
         self.k_fold = KFold(
@@ -89,7 +89,7 @@ class _EndMemberSplitter(BaseCrossValidator):
         self,
         X: np.ndarray,
         y: np.ndarray,
-        groups: Optional[np.ndarray] = None,
+        groups: np.ndarray | None = None,
     ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
         for train, test in self.k_fold.split(X, y):
             indices = np.where((y[train] == 0) | (y[train] == 1))[0]
@@ -105,9 +105,9 @@ class _EndMemberSplitter(BaseCrossValidator):
 
     def get_n_splits(
         self,
-        X: Optional[np.ndarray] = None,
-        y: Optional[np.ndarray] = None,
-        groups: Optional[np.ndarray] = None,
+        X: np.ndarray | None = None,
+        y: np.ndarray | None = None,
+        groups: np.ndarray | None = None,
     ) -> int:
         return self.n_splits
 
@@ -168,7 +168,7 @@ def hyperparam_search(
     kfold_from_endmembers: bool = False,
     kfold_n_splits: int = 5,
     kfold_n_iter: int = 10,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> List[RandomizedSearchCV]:
     """Performs hyperparameter search for multiple models.
 
@@ -267,10 +267,10 @@ def cv_predict(
     search_results: List[RandomizedSearchCV],
     X_path: str | List[str],
     y_path: str | List[str],
-    rgb_bands: Optional[List[str]] = None,
+    rgb_bands: List[str] | None = None,
     kfold_n_splits: int = 5,
     kfold_from_endmembers: bool = False,
-    random_state: Optional[int] = None,
+    random_state: int | None = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
     """Predicts the labels using cross_val_predict and plots the results for
     each model.

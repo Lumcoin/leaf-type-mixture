@@ -16,7 +16,7 @@ Typical usage example:
 """
 import os
 from collections import defaultdict
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -97,7 +97,7 @@ def interpolate_X_and_bands(
     band_names: List[str],
     cyclic: bool = True,
     method: str = "linear",
-    order: Optional[int] = None,
+    order: int | None = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """Interpolate missing time series values in X using the given method.
 
@@ -188,7 +188,7 @@ def save_raster(
 def raster2rgb(
     raster: np.ndarray,
     bands: Tuple[str, ...],
-    rgb_bands: Optional[List[str]] = None,
+    rgb_bands: List[str] | None = None,
 ) -> np.ndarray:
     """Creates an RGB image from the raster ready for plt.plot().
 
@@ -275,9 +275,9 @@ def drop_nan(
 @typechecked
 def get_similarity_matrix(
     X: np.ndarray,
-    band_names: Optional[List[str]] = None,
+    band_names: List[str] | None = None,
     method: str = "pearson",
-    seed: Optional[int] = None,
+    seed: int | None = None,
 ) -> pd.DataFrame:
     """Calculates the similarity matrix for the data.
 
@@ -488,8 +488,8 @@ def permutation_dim_red(
     y: np.ndarray,
     threshold: float,
     n_repeats: int = 1,
-    scoring: Optional[Callable] = None,
-    seed: Optional[int] = None,
+    scoring: Callable | None = None,
+    seed: int | None = None,
 ) -> Tuple[np.ndarray, List[str]]:
     """Performs dimensionality reduction by thresholding features based on
     permutation feature importance on a stock RandomForestRegressor.
