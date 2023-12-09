@@ -42,13 +42,13 @@ Typical usage example:
     )
 """
 from collections import defaultdict
-from typing import Any, Callable, Dict, Generator, List, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
-from sklearn.base import RegressorMixin
+from sklearn.base import BaseEstimator
 from sklearn.metrics._scorer import _BaseScorer, _PredictScorer
 from sklearn.model_selection import (
     BaseCrossValidator,
@@ -62,7 +62,7 @@ from ltm.features import drop_nan, load_multi_band_raster, raster2rgb
 
 
 @typechecked
-class _EndMemberSplitter(BaseCrossValidator):
+class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
     """K-fold splitter that only uses end members for training.
 
     End members are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental.
@@ -80,6 +80,16 @@ class _EndMemberSplitter(BaseCrossValidator):
         shuffle: bool = False,
         random_state: int | None = None,
     ) -> None:
+        """Initializes the EndMemberSplitter.
+
+        Args:
+            n_splits:
+                Number of splits to use for kfold splitting.
+            shuffle:
+                Whether to shuffle the data before splitting into batches. Defaults to False.
+            random_state:
+                Random state to use for reproducible results.
+        """
         self.n_splits = n_splits
         self.k_fold = KFold(
             n_splits=n_splits, shuffle=shuffle, random_state=random_state
@@ -90,7 +100,20 @@ class _EndMemberSplitter(BaseCrossValidator):
         X: np.ndarray,
         y: np.ndarray,
         groups: np.ndarray | None = None,
-    ) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        """Generates indices to split data into training and test set.
+
+        Args:
+            X:
+                Data to split.
+            y:
+                Labels to split.
+            groups:
+                Group labels to split. Not used.
+
+        Yields:
+            Tuple of indices for training and test set.
+        """
         for train, test in self.k_fold.split(X, y):
             indices = np.where((y[train] == 0) | (y[train] == 1))[0]
 
@@ -109,6 +132,19 @@ class _EndMemberSplitter(BaseCrossValidator):
         y: np.ndarray | None = None,
         groups: np.ndarray | None = None,
     ) -> int:
+        """Returns the number of splitting iterations in the cross-validator.
+
+        Args:
+            X:
+                Data to split. Not used.
+            y:
+                Labels to split. Not used.
+            groups:
+                Group labels to split. Not used.
+
+        Returns:
+            Number of splitting iterations in the cross-validator.
+        """
         return self.n_splits
 
 
@@ -156,67 +192,6 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     scorer._score_func = mixture_score_func
 
     return scorer
-
-
-@typechecked
-def hyperparam_search(
-    X: np.ndarray,
-    y: np.ndarray,
-    search_space: Dict[RegressorMixin, Dict[str, Any]],
-    scoring: Dict[str, _PredictScorer],
-    refit: str,
-    kfold_from_endmembers: bool = False,
-    kfold_n_splits: int = 5,
-    kfold_n_iter: int = 10,
-    random_state: int | None = None,
-) -> List[RandomizedSearchCV]:
-    """Performs hyperparameter search for multiple models.
-
-    Args:
-        search_space:
-            Dictionary of models and their respective hyperparameter search spaces.
-        scorers:
-            Dictionary of scorers to use for each model.
-        refit:
-            Name of the scorer to use for refitting the best model.
-        kfold_from_endmembers:
-            Boolean for whether to use only endmembers for kfold splitting. Endmembers are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental. Defaults to False.
-        kfold_n_splits:
-            Number of splits to use for kfold splitting.
-        kfold_n_iter:
-            Number of iterations to use for kfold splitting.
-        random_state:
-            Random state to use for reproducible results.
-    """
-    # Use custom kfold splitter if kfold_from_endmembers is True
-    if kfold_from_endmembers:
-        cv = _EndMemberSplitter(
-            kfold_n_splits, shuffle=True, random_state=random_state
-        )
-    else:
-        cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
-
-    # Perform hyperparameter search for each model
-    search_results = []
-    for model, param_distributions in search_space.items():
-        param_distributions["random_state"] = [random_state]
-        # model.random_state = random_state
-        search = RandomizedSearchCV(
-            model,
-            param_distributions,
-            scoring=scoring,
-            refit=refit,
-            cv=cv,
-            return_train_score=True,
-            n_iter=kfold_n_iter,
-            verbose=1,
-            random_state=random_state,
-        )
-        search.fit(X, y)
-
-        search_results.append(search)
-
-    return search_results
 
 
 @typechecked
