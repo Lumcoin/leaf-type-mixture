@@ -36,8 +36,6 @@ Typical usage example:
         X_path,
         y_path,
         rgb_bands=["B4", "B3", "B2"],
-        kfold_n_splits=5,
-        kfold_from_endmembers=True,
         random_state=42,
     )
 """
@@ -243,9 +241,7 @@ def cv_predict(
     X_path: str | List[str],
     y_path: str | List[str],
     rgb_bands: List[str] | None = None,
-    kfold_n_splits: int = 5,
-    kfold_from_endmembers: bool = False,
-    random_state: int | None = None,
+    cv: int | BaseCrossValidator | None = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
     """Predicts the labels using cross_val_predict and plots the results for
     each model.
@@ -259,10 +255,8 @@ def cv_predict(
             Single string with path to the y data in GeoTIFF format.
         rgb_bands:
             A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
-        kfold_n_splits:
-            Integer for number of splits to use for kfold splitting.
-        kfold_from_endmembers:
-            Boolean for whether to use only endmembers for kfold splitting. Endmembers are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental. Defaults to False.
+        cv:
+            An integer for the number of folds or a BaseCrossValidator object. Defaults to None.
         random_state:
             Integer to be used as random state for reproducible results.
 
@@ -274,10 +268,6 @@ def cv_predict(
     y, _ = load_multi_band_raster(y_path)
     if y.shape[1] == 1:
         y = y.ravel()
-    elif kfold_from_endmembers:
-        print(
-            "Warning: Using kfold_from_endmembers with area per leaf type as labels is experimental."
-        )
 
     with rasterio.open(y_path) as src:
         bands = src.descriptions
@@ -286,14 +276,6 @@ def cv_predict(
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
     X, y, indices_array = drop_nan(X, y, indices_array)
-
-    # Use custom kfold splitter if kfold_from_endmembers is True
-    if kfold_from_endmembers:
-        cv = _EndMemberSplitter(
-            kfold_n_splits, shuffle=True, random_state=random_state
-        )
-    else:
-        cv = KFold(kfold_n_splits, shuffle=True, random_state=random_state)
 
     # Predict using cross_val_predict
     plots = []
