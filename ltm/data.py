@@ -20,6 +20,7 @@ Typical usage example:
 """
 
 import datetime
+from itertools import product
 from pathlib import Path
 from typing import List, Tuple
 
@@ -171,6 +172,24 @@ def _prettify_band_name(
 
 
 @typechecked
+def _compute_area(
+    fc: ee.FeatureCollection,
+    scale: float,
+    fine_scale: float,
+    crs: str,
+) -> ee.Image:
+    # Compute area by masking a constant image and multiplying by scale**2
+    fc_area = ee.Image.constant(1).clip(fc).mask()
+    fc_area = ee.Image.constant(scale**2).multiply(fc_area)
+
+    # Reduce to coarse resolution
+    fc_area = fc_area.reproject(scale=fine_scale, crs=crs)
+    fc_area = fc_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
+
+    return fc_area
+
+
+@typechecked
 def combine_band_name(
     composite_idx: int,
     reducer: str,
@@ -279,11 +298,135 @@ def show_timeseries(
 
 
 @typechecked
-def sentinel_composite(
+def compute_label(
     plot: pd.DataFrame,
-    time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
-    X_path: str = "../data/processed/X.tif",
     y_path: str = "../data/processed/y.tif",
+    areas_as_y: bool = False,
+) -> str:
+    """Computes the label for a plot.
+
+    Args:
+        plot:
+            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
+        y_path:
+            A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture. Will not be saved if None. Resulting in a speedup.
+        areas_as_y:
+            A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
+
+    Returns:
+        A string representing the file path to the raster with values between 0 and 1 for the leaf type mixture. 1 being broadleaf and 0 being conifer.
+    """
+    # Initialize Earth Engine API
+    if not ee.data._credentials:
+        print("Initializing Earth Engine API...")
+        ee.Initialize()
+    print("Preparing labels...")
+
+    # Ensure proper plot DataFrame format
+    expected_dtypes = {
+        "longitude": np.float64,
+        "latitude": np.float64,
+        "dbh": np.float64,
+        "broadleaf": np.int8,
+    }
+    plot = plot.rename(columns=str.lower)
+    if set(expected_dtypes.keys()) != set(plot.columns):
+        raise ValueError("Columns do not match expected columns")
+    plot = plot.astype(expected_dtypes)
+
+    # Ensure proper path format
+    y_pathlib = Path(y_path)
+    if y_pathlib.suffix != ".tif":
+        raise ValueError("y_path must be a string ending in .tif")
+    if not y_pathlib.parent.exists():
+        raise ValueError(
+            f"y_path parent directory does not exist: {y_pathlib.parent}"
+        )
+
+    # Upload plot
+    broadleafs = []
+    conifers = []
+    for _, row in plot.iterrows():
+        circle = ee.Geometry.Point(
+            [
+                row["longitude"],
+                row["latitude"],
+            ]
+        ).buffer(row["dbh"] / 2)
+
+        if row["broadleaf"]:
+            broadleafs.append(circle)
+        else:
+            conifers.append(circle)
+    broadleafs = ee.FeatureCollection(broadleafs)
+    conifers = ee.FeatureCollection(conifers)
+
+    # Get region of interest (ROI)
+    roi = broadleafs.merge(conifers).geometry()
+
+    # Get CRS in epsg format for center of the roi
+    longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
+    zone_number = utm.latlon_to_zone_number(latitude, longitude)
+    is_south = utm.latitude_to_zone_letter(latitude) < "N"
+
+    crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
+    crs = crs.to_string()
+
+    # Convert ROI to bounds in output crs
+    roi = roi.bounds(0.01, crs)
+
+    # Check if rectangle has reasonable size
+    if roi.area(0.01).getInfo() == 0:
+        raise ValueError(
+            "Plot bounding box has area 0. Check if plot coordinates are valid."
+        )
+    if roi.area(0.01).getInfo() > 1e7:
+        raise ValueError(
+            "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
+        )
+
+    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
+    scale = 10
+
+    # Render plot as fine resolution image, then reduce to coarse resolution
+    fine_scale = min(plot["dbh"].min() * 5, scale)
+    if plot["dbh"].min() < 0.05:
+        print(
+            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
+        )
+        fine_scale = 0.25
+
+    # Compute broadleaf and conifer area
+    broadleaf_area = _compute_area(broadleafs, scale, fine_scale, crs)
+    conifer_area = _compute_area(conifers, scale, fine_scale, crs)
+
+    # Compute y (leaf type mixture) from broadleaf_area and conifer_area
+    total_area = broadleaf_area.add(conifer_area)
+    if areas_as_y:
+        y = broadleaf_area.addBands(conifer_area)
+        y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
+        y = y.rename(["Broadleaf Area", "Conifer Area"])
+    else:
+        y = broadleaf_area.divide(total_area)
+        y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
+        y = y.rename("Leaf Type Mixture")
+
+    # Clip to roi and reproject
+    y = y.clip(roi)
+    y = y.reproject(scale=scale, crs=crs)
+
+    # Save y
+    print("Computing labels...")
+    _save_image(y, y_path, scale=scale, crs=crs)
+
+    return y_path
+
+
+@typechecked
+def compute_data(
+    time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
+    y_path,
+    X_path: str = "../data/processed/X.tif",
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
     indices: List[str] | None = None,
@@ -291,20 +434,16 @@ def sentinel_composite(
     sentinel_bands: List[str] | None = None,
     remove_clouds: bool = True,
     remove_qa: bool = True,
-    areas_as_y: bool = False,
-) -> Tuple[str, str]:
-    """Creates a composite from many Sentinel 2 satellite images for a given
-    plot.
+) -> str:
+    """Creates a composite from many Sentinel 2 satellite images for a given label image.
 
     Args:
-        plot:
-            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
         time_window:
             A tuple of two dates or strings representing the start and end of the time window to retrieve the satellite images.
-        X_path:
-            A string representing the file path to save the composite raster.
         y_path:
-            A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture. Will not be saved if None. Resulting in a speedup.
+            A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
+        X_path:
+            A string representing the output file path to save the composite raster.
         num_composites:
             An integer representing the number of composites to create. Defaults to 1.
         temporal_reducers:
@@ -319,29 +458,15 @@ def sentinel_composite(
             A boolean indicating whether to remove clouds from the satellite images based on the QA60 band.
         remove_qa:
             A boolean indicating whether to remove the QA bands from the satellite images.
-        areas_as_y:
-            A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
 
     Returns:
-        A tuple of two strings representing the file paths to the composite raster and the raster with values between 0 and 1 for the leaf type mixture. 1 being broadleaf and 0 being conifer.
+        A string representing the file path to the composite raster.
     """
     # Initialize Earth Engine API
     if not ee.data._credentials:
         print("Initializing Earth Engine API...")
         ee.Initialize()
     print("Preparing data...")
-
-    # Ensure proper plot DataFrame format
-    expected_dtypes = {
-        "longitude": np.float64,
-        "latitude": np.float64,
-        "dbh": np.float64,
-        "broadleaf": np.int8,
-    }
-    plot = plot.rename(columns=str.lower)
-    if set(expected_dtypes.keys()) != set(plot.columns):
-        raise ValueError("Columns do not match expected columns")
-    plot = plot.astype(expected_dtypes)
 
     # Ensure proper time window format and convert to strings
     date_format = "%Y-%m-%d"
@@ -415,20 +540,23 @@ def sentinel_composite(
         )
 
     # Check if all bands are valid. Use all bands if sentinel_bands is None
+    available_bands = [
+        "B1",
+        "B2",
+        "B3",
+        "B4",
+        "B5",
+        "B6",
+        "B7",
+        "B8",
+        "B8A",
+        "B9",
+        "B10",
+        "B11",
+        "B12",
+    ]
     if level_2a:
-        available_bands = [
-            "B1",
-            "B2",
-            "B3",
-            "B4",
-            "B5",
-            "B6",
-            "B7",
-            "B8",
-            "B8A",
-            "B9",
-            "B11",
-            "B12",
+        available_bands += [
             "AOT",
             "WVP",
             "SCL",
@@ -438,22 +566,7 @@ def sentinel_composite(
             "MSK_CLDPRB",
             "MSK_SNWPRB",
         ]
-    else:
-        available_bands = [
-            "B1",
-            "B2",
-            "B3",
-            "B4",
-            "B5",
-            "B6",
-            "B7",
-            "B8",
-            "B8A",
-            "B9",
-            "B10",
-            "B11",
-            "B12",
-        ]
+        available_bands.pop(available_bands.index("B10"))
 
     if sentinel_bands is None:
         sentinel_bands = available_bands
@@ -464,39 +577,22 @@ def sentinel_composite(
                 f"{illegal_bands} not available in: {available_bands}"
             )
 
-    # Get region of interest (ROI)
-    roi = ee.Geometry.Rectangle(
+    # Get region of interest (ROI), scale, and coordinate reference system (CRS)
+    with rasterio.open("../data/processed/separate_y.tif") as src:
+        crs = src.crs.to_string()
+        res = src.res
+        if res[0] != res[1]:
+            raise ValueError("resolution is not square!")
+        scale = res[0]
+        bounds = src.bounds
+
+    fc = ee.FeatureCollection(
         [
-            plot["longitude"].min(),
-            plot["latitude"].min(),
-            plot["longitude"].max(),
-            plot["latitude"].max(),
+            ee.Geometry.Point([x, y], proj=crs)
+            for x, y in product(bounds[::2], bounds[1::2])
         ]
-    ).buffer(plot["dbh"].max() / 2)
-
-    # Check if rectangle has reasonable size
-    if roi.area().getInfo() == 0:
-        raise ValueError(
-            "Plot bounding box has area 0. Check if plot coordinates are valid."
-        )
-    if roi.area().getInfo() > 1e7:
-        raise ValueError(
-            "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
-        )
-
-    # Get CRS in epsg format for center of the roi
-    longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
-    zone_number = utm.latlon_to_zone_number(latitude, longitude)
-    is_south = utm.latitude_to_zone_letter(latitude) < "N"
-
-    crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
-    crs = ":".join(crs.to_authority())
-
-    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
-    scale = 10
-
-    # Convert ROI to bounding box in output crs
-    roi = roi.bounds(0.01, crs)
+    )
+    roi = fc.geometry().bounds(0.01, proj=crs)
 
     # Loop through time windows
     data = []
@@ -551,74 +647,5 @@ def sentinel_composite(
     # Save data (X)
     print("Computing data...")
     _save_image(data, X_path, scale=scale, crs=crs)
-    print("Preparing labels...")
 
-    # End here if y_path is None (speedup)
-    if y_path is None:
-        return X_path, y_path
-
-    # Upload plot
-    broadleafs = []
-    conifers = []
-    for _, row in plot.iterrows():
-        circle = ee.Geometry.Point(
-            [
-                row["longitude"],
-                row["latitude"],
-            ]
-        ).buffer(row["dbh"] / 2)
-
-        if row["broadleaf"]:
-            broadleafs.append(circle)
-        else:
-            conifers.append(circle)
-    broadleafs = ee.FeatureCollection(broadleafs)
-    conifers = ee.FeatureCollection(conifers)
-
-    # Render plot as fine resolution image, then reduce to coarse resolution
-    fine_scale = plot["dbh"].min() * 5
-    # not more coarse than Sentinel 2 resolution
-    fine_scale = min(fine_scale, 10)
-    if plot["dbh"].min() < 0.05:
-        print(
-            "Info: DBH < 0.05 m found. Small trees might be ignored by Google Earth Engine."
-        )
-        fine_scale = 0.25
-
-    # Compute broadleaf area
-    broadleaf_area = ee.Image.constant(1).clip(broadleafs).mask()
-    broadleaf_area = ee.Image.constant(scale**2).multiply(broadleaf_area)
-    broadleaf_area = broadleaf_area.reproject(scale=fine_scale, crs=crs)
-    broadleaf_area = broadleaf_area.reduceResolution(
-        ee.Reducer.mean(), maxPixels=10_000
-    )
-
-    # Compute conifer area
-    conifer_area = ee.Image.constant(1).clip(conifers).mask()
-    conifer_area = ee.Image.constant(scale**2).multiply(conifer_area)
-    conifer_area = conifer_area.reproject(scale=fine_scale, crs=crs)
-    conifer_area = conifer_area.reduceResolution(
-        ee.Reducer.mean(), maxPixels=10_000
-    )
-
-    # Compute y (leaf type mixture) from broadleaf_area and conifer_area
-    if areas_as_y:
-        y = broadleaf_area.addBands(conifer_area)
-        # Remove pixels with no trees
-        y = y.updateMask(broadleaf_area.add(conifer_area).gt(0))
-        y = y.rename(["Broadleaf Area", "Conifer Area"])
-    else:
-        denominator = broadleaf_area.add(conifer_area)
-        y = broadleaf_area.divide(denominator)
-        y = y.updateMask(denominator.gt(0))  # Remove pixels with no trees
-        y = y.rename("Leaf Type Mixture")
-
-    # Clip to roi
-    y = y.clip(roi)
-    y = y.reproject(scale=scale, crs=crs)
-
-    # Save y
-    print("Computing labels...")
-    _save_image(y, y_path, scale=scale, crs=crs)
-
-    return X_path, y_path
+    return X_path
