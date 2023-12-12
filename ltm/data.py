@@ -299,17 +299,17 @@ def show_timeseries(
 
 @typechecked
 def compute_label(
+    y_path: str,
     plot: pd.DataFrame,
-    y_path: str = "../data/processed/y.tif",
     areas_as_y: bool = False,
 ) -> str:
     """Computes the label for a plot.
 
     Args:
-        plot:
-            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
         y_path:
             A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture. Will not be saved if None. Resulting in a speedup.
+        plot:
+            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
         areas_as_y:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
 
@@ -424,9 +424,9 @@ def compute_label(
 
 @typechecked
 def compute_data(
+    y_path_from: str,
+    X_path_to: str,
     time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
-    y_path,
-    X_path: str = "../data/processed/X.tif",
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
     indices: List[str] | None = None,
@@ -438,12 +438,12 @@ def compute_data(
     """Creates a composite from many Sentinel 2 satellite images for a given label image.
 
     Args:
+        y_path_from:
+            A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
+        X_path_to:
+            A string representing the output file path to save the composite raster.
         time_window:
             A tuple of two dates or strings representing the start and end of the time window to retrieve the satellite images.
-        y_path:
-            A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
-        X_path:
-            A string representing the output file path to save the composite raster.
         num_composites:
             An integer representing the number of composites to create. Defaults to 1.
         temporal_reducers:
@@ -484,8 +484,8 @@ def compute_data(
         )
 
     # Ensure proper path format
-    X_pathlib = Path(X_path)
-    y_pathlib = Path(y_path)
+    X_pathlib = Path(X_path_to)
+    y_pathlib = Path(y_path_from)
     if X_pathlib.suffix != ".tif" or y_pathlib.suffix != ".tif":
         raise ValueError("X_path and y_path must be strings ending in .tif")
     if not X_pathlib.parent.exists():
@@ -646,6 +646,6 @@ def compute_data(
 
     # Save data (X)
     print("Computing data...")
-    _save_image(data, X_path, scale=scale, crs=crs)
+    _save_image(data, X_path_to, scale=scale, crs=crs)
 
-    return X_path
+    return X_path_to
