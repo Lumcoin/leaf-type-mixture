@@ -1,22 +1,31 @@
 """Loads, manipulates, and analyzes multi-band raster data.
 
-The data is loaded as a numpy array with shape (num_rows, num_bands). The band names are stored in a list of strings. The data can be manipulated using the functions interpolate_X_and_bands, drop_nan, dendrogram_dim_red, and permutation_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
+The data is loaded as a pandas DataFrame with band names as column names and the flattened data as rows. The data can be manipulated using the functions interpolate_X, drop_nan_rows, and dendrogram_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
 
 Typical usage example:
 
-    X, band_names = load_multi_band_raster("path/to/image.tif")
-    X, band_names = interpolate_X_and_bands(X, band_names)
-    X, band_names = drop_nan(X, band_names)
-    similarity_matrix = get_similarity_matrix(X, band_names)
+    from ltm.features import load_raster, interpolate_X, drop_nan_rows, save_raster, get_similarity_matrix, show_similarity_matrix, show_dendrogram, dendrogram_dim_red
+
+    X_path = "X.tif"
+    y_path = "y.tif"
+
+    X = load_raster(X_path)
+    y = load_raster(y_path)
+
+    X = interpolate_X(X)
+
+    similarity_matrix = get_similarity_matrix(X)
     show_similarity_matrix(similarity_matrix)
     show_dendrogram(similarity_matrix)
-    X, band_names = dendrogram_dim_red(X, band_names, similarity_matrix, threshold=0.5)
-    X, band_names = permutation_dim_red(X, band_names, y, threshold=0.01)
-    save_raster(X, band_names, "path/to/image.tif", "path/to/image.tif")
+    dendrogram_dim_red(X, similarity_matrix, threshold=0.2)
+
+    save_raster(X, X_path, "../data/processed/interpolated_X.tif")
+
+    X, y = drop_nan_rows(X, y)
 """
 import os
 from collections import defaultdict
-from typing import Callable, List, Tuple
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,86 +35,63 @@ from scipy.cluster import hierarchy
 from scipy.cluster.hierarchy import dendrogram, ward
 from scipy.spatial.distance import squareform
 from scipy.stats import spearmanr
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
-from sklearn.inspection import permutation_importance
 from tqdm import tqdm
 from typeguard import typechecked
 
 
 @typechecked
-def load_multi_band_raster(
-    raster_path: str | List[str],
-) -> Tuple[np.ndarray, List[str]]:
-    """Loads one or many rasters with multiple bands and returns the data ready
+def load_raster(
+    raster_path: str,
+    monochrome_as_dataframe: bool = False,
+) -> pd.DataFrame | pd.Series:
+    """Loads a raster and returns the data ready
     to use with sklearn and band names.
 
     Args:
         raster_path:
-            A string or list of strings representing the file paths to the images.
+            A string representing the file path to the raster.
+        monochrome_as_dataframe:
+            A boolean representing whether to return a monochrome raster as a pandas DataFrame instead of a Series. Defaults to False.
 
     Returns:
-        A tuple of a numpy array containing the data and a list of strings representing the band names.
+        A DataFrame containing the data with band names as column names.
     """
-    # Create list of paths if only one path is given
-    if isinstance(raster_path, str):
-        raster_path = [raster_path]
-
     # Check if all paths are valid
-    for path in raster_path:
-        if not path.endswith(".tif"):
-            raise ValueError(
-                f"Expected path to .tif file, got '{path}' instead."
-            )
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Could not find file '{path}'.")
+    if not raster_path.endswith(".tif"):
+        raise ValueError(
+            f"Expected path to .tif file, got '{raster_path}' instead."
+        )
+    if not os.path.exists(raster_path):
+        raise FileNotFoundError(f"Could not find file '{raster_path}'.")
 
-    data = None
-    band_names = []
-    for path in raster_path:
-        # Load dataset image
-        with rasterio.open(path) as src:
-            raster = src.read()
-            band_count = src.count
-            curr_band_names = [
-                band_name if isinstance(band_name, str) else str(i)
-                for i, band_name in enumerate(src.descriptions)
-            ]
-            curr_data = raster.transpose(1, 2, 0).reshape(-1, band_count)
+    with rasterio.open(raster_path) as src:
+        raster = src.read()
+        band_names = [
+            band_name if isinstance(band_name, str) else str(i)
+            for i, band_name in enumerate(src.descriptions)
+        ]
+        band_count = src.count
+        values = raster.transpose(1, 2, 0).reshape(-1, band_count)
 
-        # First image
-        if data is None:
-            # Check if band names are unique
-            if len(set(band_names)) != len(band_names):
-                raise ValueError("All band names must be unique.")
+    if monochrome_as_dataframe or band_count > 1:
+        return pd.DataFrame(values, columns=band_names)
 
-            data = curr_data
-            band_names = curr_band_names
-        else:
-            # Check if band names are the same
-            if band_names != curr_band_names:
-                raise ValueError("All band names must be the same.")
-
-            data = np.vstack((data, curr_data))
-
-    return data, band_names
+    return pd.Series(values[:, 0], name=band_names[0])
 
 
 @typechecked
-def interpolate_X_and_bands(
-    X: np.ndarray,
-    band_names: List[str],
+def interpolate_X(
+    X: pd.DataFrame,
     cyclic: bool = True,
     method: str = "linear",
     order: int | None = None,
-) -> Tuple[np.ndarray, List[str]]:
+) -> pd.DataFrame:
     """Interpolate missing time series values in X using the given method.
 
     Args:
         X:
-            A numpy array containing the data.
-        band_names:
-            A list of strings representing the band names. Necessary for deducing the number of composites.
+            A pd.DataFrame containing the data as values and band names as column names.
         cyclic:
             A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
         method:
@@ -116,15 +102,18 @@ def interpolate_X_and_bands(
     Returns:
         A tuple of a numpy array containing the interpolated data and a list of strings representing the band names. The band names are unchanged.
     """
+    band_names = list(X.columns)
+    values = X.values
+
     # Get the number of composites and number of bands
     num_composites = int(band_names[-1].split()[0])
     num_bands = len(band_names) // num_composites
 
     # Reshape into DataFrame with one row per composite
-    reshaped_X = X.reshape(-1, num_composites, num_bands)
-    reshaped_X = reshaped_X.transpose(0, 2, 1)
-    reshaped_X = reshaped_X.reshape(-1, num_composites).T
-    df = pd.DataFrame(reshaped_X)
+    reshaped = values.reshape(-1, num_composites, num_bands)
+    reshaped = reshaped.transpose(0, 2, 1)
+    reshaped = reshaped.reshape(-1, num_composites).T
+    df = pd.DataFrame(reshaped)
 
     # Interpolate
     if cyclic:
@@ -140,13 +129,14 @@ def interpolate_X_and_bands(
     interpolated_X = interpolated_X.transpose(0, 2, 1)
     interpolated_X = interpolated_X.reshape(-1, num_bands * num_composites)
 
-    return interpolated_X, band_names
+    interpolated_X = pd.DataFrame(interpolated_X, columns=band_names)
+
+    return interpolated_X
 
 
 @typechecked
 def save_raster(
-    X: np.ndarray,
-    band_names: List[str],
+    X: pd.DataFrame,
     source_path: str,
     destination_path: str,
 ) -> str:
@@ -154,19 +144,17 @@ def save_raster(
 
     Args:
         X:
-            A numpy array containing the data.
-        band_names:
-            A list of strings representing the band names.
+            A pandas DataFrame containing the data. The column names are used as band names.
         source_path:
-            A string representing the file path to the source image. Used for copying the raster profile.
+            A string of the file path to the source image. Used for copying the raster profile.
         destination_path:
-            A string representing the file path to the destination image.
+            A string of the file path to the destination image.
 
     Returns:
-        A string representing the file path to the destination image.
+        A string of the file path to the destination image.
     """
     # Copy X
-    X = X.copy()
+    X_values = X.values.copy()
 
     # Read raster profile and shape
     with rasterio.open(source_path) as raster:
@@ -174,89 +162,45 @@ def save_raster(
         shape = raster.read().shape
 
     # Reshape X
-    X = X.reshape(shape[1], shape[2], shape[0]).transpose(2, 0, 1)
+    X_values = X_values.reshape(shape[1], shape[2], shape[0]).transpose(2, 0, 1)
 
     # Write raster
     with rasterio.open(destination_path, "w", **profile) as dst:
-        dst.write(X)
-        dst.descriptions = band_names
+        dst.write(X_values)
+        dst.descriptions = list(X)
 
     return destination_path
 
 
 @typechecked
-def raster2rgb(
-    raster: np.ndarray,
-    bands: Tuple[str, ...],
-    rgb_bands: List[str] | None = None,
-) -> np.ndarray:
-    """Creates an RGB image from the raster ready for plt.plot().
-
-    Args:
-        raster:
-            A numpy array containing the raster data with shape (num_bands, height, width).
-        bands:
-            A tuple of strings representing the band names.
-        rgb_bands:
-            An optional list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
-
-    Returns:
-        A numpy array containing the RGB image ready for plt.plot().
-    """
-    # Check if rgb_bands has length of three or is None
-    if rgb_bands is not None and len(rgb_bands) != 3:
-        raise ValueError("rgb_bands must be a list of length 3 or None")
-
-    # Fill rgb_bands with bands and maybe None if it is None
-    if rgb_bands is None:
-        if len(bands) == 1:
-            rgb_bands = [bands[0]] * 3
-        elif len(bands) == 2:
-            rgb_bands = [bands[0], bands[1], None]
-        else:
-            rgb_bands = bands[:3]
-
-    # Create RGB image bands
-    rgb_plot = []
-    for rgb_band in rgb_bands:
-        if rgb_band is not None:
-            idx = bands.index(rgb_band)
-            rgb_plot.append(raster[idx])
-        else:
-            rgb_plot.append(np.zeros_like(raster[0, :, :]))
-
-    # Stack RGB image bands
-    rgb_plot = np.dstack(rgb_plot)
-
-    return rgb_plot
-
-
-@typechecked
-def drop_nan(
-    *arrays: np.ndarray,
-) -> np.ndarray | Tuple[np.ndarray, ...]:
-    """Drops rows with NaN values.
+def drop_nan_rows(
+    *dfs: pd.Series | pd.DataFrame,
+    reset_index: bool = False,
+) -> pd.Series | pd.DataFrame | Tuple[pd.Series | pd.DataFrame, ...]:
+    """Drops rows with any NaN values.
 
     Args:
         arrays:
-            Numpy arrays of either one or two dimensions.
+            Pandas Series or DataFrames with the same number of rows.
+        reset_index:
+            A boolean that resets the indices of the results if true. Defaults to False.
 
     Returns:
-        A numpy array or a tuple of numpy arrays containing the input data without NaN values.
+        A pandas Series or DataFrame or a tuple of such containing the input data without NaN values.
     """
     # Check if all arrays have the same number of rows and at max two dimensions
-    if len(set(array.shape[0] for array in arrays)) != 1:
+    num_rows = set(len(df) for df in dfs)
+    if len(num_rows) != 1:
         raise ValueError("All arrays must have the same number of rows.")
-    if any(len(array.shape) > 2 for array in arrays):
-        raise ValueError("All arrays must have at max two dimensions.")
+    num_rows = num_rows.pop()
 
     # Drop rows with NaN values
-    mask = np.full(arrays[0].shape[0], fill_value=True)
-    for array in arrays:
-        new_mask = ~np.isnan(array)
-        if len(new_mask.shape) == 2:
-            new_mask = new_mask.all(axis=1)
-        mask = np.logical_and(mask, new_mask)
+    mask = np.ones(num_rows, dtype=bool)
+    for df in dfs:
+        if isinstance(df, pd.Series):
+            mask &= ~df.isna().values
+        else:
+            mask &= ~df.isna().any(axis=1)
 
     # Raise an error if all rows are dropped
     if not mask.any():
@@ -265,8 +209,10 @@ def drop_nan(
         )
 
     # Prepare result
-    result = tuple(array[mask] for array in arrays)
-    if len(arrays) == 1:
+    result = tuple(df[mask] for df in dfs)
+    if reset_index:
+        result = tuple(df.reset_index(drop=True) for df in result)
+    if len(dfs) == 1:
         result = result[0]
 
     return result
@@ -274,8 +220,7 @@ def drop_nan(
 
 @typechecked
 def get_similarity_matrix(
-    X: np.ndarray,
-    band_names: List[str] | None = None,
+    X: pd.DataFrame,
     method: str = "pearson",
     seed: int | None = None,
 ) -> pd.DataFrame:
@@ -283,9 +228,7 @@ def get_similarity_matrix(
 
     Args:
         X:
-            A numpy array containing the data.
-        band_names:
-            An optional list of strings representing the band names.
+            A pandas DataFrame containing the data. The column names are used as band names.
         method:
             A string representing the method to use for calculating the similarity matrix. Must be either 'pearson', 'spearman', or 'mutual_info'. Defaults to 'pearson'.
         seed:
@@ -294,13 +237,9 @@ def get_similarity_matrix(
     Returns:
         A numpy array containing the similarity matrix. It is symmetrical, has a diagonal of ones and values from 0 to 1.
     """
-    # Check if X has two dimensions
-    if len(X.shape) != 2:
-        raise ValueError("X must have two dimensions.")
-
-    # Check if all band names are unique
-    if len(set(band_names)) != len(band_names):
-        raise ValueError("All band names must be unique.")
+    # Check if all column names are unique
+    if len(set(X.columns)) != len(X.columns):
+        raise ValueError("All column names must be unique.")
 
     # Check if method is valid
     valid_methods = ["pearson", "spearman", "mutual_info"]
@@ -310,16 +249,19 @@ def get_similarity_matrix(
         )
 
     # Calculate similarity matrix
+    X_values = X.values
     if method == "pearson":
-        similarity_matrix = np.corrcoef(X, rowvar=False)
+        similarity_matrix = np.corrcoef(X_values, rowvar=False)
     elif method == "spearman":
-        similarity_matrix = spearmanr(X).correlation
+        similarity_matrix = spearmanr(X_values).correlation
     elif method == "mutual_info":
         # EXPERIMENTAL, most likely scientifically wrong
-        n_neighbors = min(3, X.shape[0] - 1)
-        similarity_matrix = np.full((X.shape[1], X.shape[1]), np.nan)
-        for i, band_1 in tqdm(enumerate(X.T)):
-            for j, band_2 in enumerate(X.T):
+        n_neighbors = min(3, X_values.shape[0] - 1)
+        similarity_matrix = np.full(
+            (X_values.shape[1], X_values.shape[1]), np.nan
+        )
+        for i, band_1 in tqdm(enumerate(X_values.T)):
+            for j, band_2 in enumerate(X_values.T):
                 similarity_matrix[i, j] = mutual_info_regression(
                     band_1.reshape(-1, 1),
                     band_2,
@@ -351,7 +293,7 @@ def get_similarity_matrix(
 
     # Convert to pandas DataFrame
     similarity_matrix = pd.DataFrame(
-        similarity_matrix, columns=band_names, index=band_names
+        similarity_matrix, columns=X.columns, index=X.columns
     )
 
     return similarity_matrix
@@ -432,20 +374,17 @@ def show_dendrogram(
 
 @typechecked
 def dendrogram_dim_red(
-    X: np.ndarray,
-    band_names: List[str],
+    X: pd.DataFrame,
     similarity_matrix: pd.DataFrame,
     threshold: float,
-) -> Tuple[np.ndarray, List[str]]:
+) -> pd.DataFrame:
     """Performs dimensionality reduction using the threshold of the dendrogram.
 
     Implements approach described in https://scikit-learn.org/stable/auto_examples/inspection/plot_permutation_importance_multicollinear.html#handling-multicollinear-features
 
     Args:
         X:
-            A numpy array containing the data.
-        band_names:
-            A list of strings representing the band names.
+            A pandas DataFrame containing the data. The column names are used as band names.
         similarity_matrix:
             A pandas DataFrame containing the similarity matrix.
         threshold:
@@ -457,6 +396,7 @@ def dendrogram_dim_red(
     # Check if similarity matrix is square
     index = list(similarity_matrix.index)
     columns = list(similarity_matrix.columns)
+    band_names = list(X.columns)
     if index != band_names or columns != band_names:
         raise ValueError(
             "Similarity matrix must be square with band_names as index and columns."
@@ -476,6 +416,6 @@ def dendrogram_dim_red(
     selected_bands = [v[0] for v in cluster_id_to_band_ids.values()]
     selected_band_names = list(np.array(band_names)[selected_bands])
 
-    selected_X = X[:, selected_bands]
+    selected_X = X[selected_band_names]
 
-    return selected_X, selected_band_names
+    return selected_X

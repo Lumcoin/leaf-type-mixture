@@ -8,13 +8,22 @@ target data for machine learning models.
 
 Typical usage example:
 
-    from ltm.data import sentinel_composite
+    from ltm.data import compute_label, sentinel_composite
     import pandas as pd
 
     plot = pd.read_csv("plot.csv")
 
-    X_path, y_path = sentinel_composite(
+    y_path = "y.tif"
+    X_path = "X.tif"
+
+    compute_label(
+        y_path=y_path,
         plot=plot,
+    )
+
+    sentinel_composite(
+        y_path_from=y_path,
+        X_path_to=X_path,
         time_window=("2020-01-01", "2020-12-31"),
     )
 """
@@ -111,7 +120,7 @@ def _save_image(
         mask_response = _download_image(image.mask(), scale, crs)
     except ee.ee_exception.EEException as exc:
         raise ValueError(
-            "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog."
+            "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog online."
         ) from exc
 
     if image_response.status_code == mask_response.status_code == 200:
@@ -370,17 +379,18 @@ def compute_label(
     is_south = utm.latitude_to_zone_letter(latitude) < "N"
 
     crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
-    crs = crs.to_string()
+    crs = f"EPSG:{crs.to_epsg()}"
 
     # Convert ROI to bounds in output crs
     roi = roi.bounds(0.01, crs)
 
     # Check if rectangle has reasonable size
-    if roi.area(0.01).getInfo() == 0:
+    roi_area = roi.area(0.01).getInfo()
+    if roi_area == 0:
         raise ValueError(
             "Plot bounding box has area 0. Check if plot coordinates are valid."
         )
-    if roi.area(0.01).getInfo() > 1e7:
+    if roi_area > 1e7:
         raise ValueError(
             "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
         )
@@ -423,7 +433,7 @@ def compute_label(
 
 
 @typechecked
-def compute_data(
+def sentinel_composite(
     y_path_from: str,
     X_path_to: str,
     time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
@@ -435,7 +445,8 @@ def compute_data(
     remove_clouds: bool = True,
     remove_qa: bool = True,
 ) -> str:
-    """Creates a composite from many Sentinel 2 satellite images for a given label image.
+    """Creates a composite from many Sentinel 2 satellite images for a given
+    label image.
 
     Args:
         y_path_from:
@@ -610,15 +621,15 @@ def compute_data(
         if remove_clouds:
             s2 = s2.map(_mask_s2_clouds)
 
+        # Add indices before possibly removing bands necessary for computing indices
+        if indices:
+            s2 = s2.spectralIndices(indices)
+
         # Remove QA bands
         remaining_bands = sentinel_bands
         if not remove_qa:
             remaining_bands += ["QA20", "QA40", "QA60"]
         s2 = s2.select(remaining_bands)
-
-        # Add indices
-        if indices:
-            s2 = s2.spectralIndices(indices)
 
         # Reduce by temporal_reducers
         reduced_images = [

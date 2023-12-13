@@ -3,14 +3,14 @@ model.
 
 Searches for the best hyperparameters for multiple models using randomized search The search results can be used to compare the performance of different models. The model performance can be compared visually using cv_predict().
 
-Typical usage example:
+Typical usage example: TODO
 
     from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
     from sklearn.metrics import make_scorer, mean_absolute_error, mean_squared_error
 
     X, band_names = load_multi_band_raster("X.tif")
     y, _ = load_multi_band_raster("y.tif")
-    X, y = drop_nan(X, y)
+    X, y = drop_nan_rows(X, y)
 
     search_space = {
         RandomForestRegressor(): {
@@ -56,7 +56,7 @@ from sklearn.model_selection import (
 )
 from typeguard import typechecked
 
-from ltm.features import drop_nan, load_multi_band_raster, raster2rgb
+from ltm.features import drop_nan_rows, load_raster
 
 
 @typechecked
@@ -165,6 +165,40 @@ def _y2raster(
 
 
 @typechecked
+def _raster2rgb(
+    raster: np.ndarray,
+    bands: Tuple[str, ...],
+    rgb_bands: List[str] | None = None,
+) -> np.ndarray:
+    # Check if rgb_bands has length of three or is None
+    if rgb_bands is not None and len(rgb_bands) != 3:
+        raise ValueError("rgb_bands must be a list of length 3 or None")
+
+    # Fill rgb_bands with bands and maybe None if it is None
+    if rgb_bands is None:
+        if len(bands) == 1:
+            rgb_bands = [bands[0]] * 3
+        elif len(bands) == 2:
+            rgb_bands = [bands[0], bands[1], None]
+        else:
+            rgb_bands = bands[:3]
+
+    # Create RGB image bands
+    rgb_plot = []
+    for rgb_band in rgb_bands:
+        if rgb_band is not None:
+            idx = bands.index(rgb_band)
+            rgb_plot.append(raster[idx])
+        else:
+            rgb_plot.append(np.zeros_like(raster[0, :, :]))
+
+    # Stack RGB image bands
+    rgb_plot = np.dstack(rgb_plot)
+
+    return rgb_plot
+
+
+@typechecked
 def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     """Modifies the score function of a scorer to use the computed leaf type
     mixture from leaf type areas.
@@ -264,8 +298,8 @@ def cv_predict(
         Tuple of ground truth image and list of predicted images.
     """
     # Load data and plot shape
-    X, _ = load_multi_band_raster(X_path)
-    y, _ = load_multi_band_raster(y_path)
+    X, _ = load_raster(X_path)
+    y, _ = load_raster(y_path)
     if y.shape[1] == 1:
         y = y.ravel()
 
@@ -275,7 +309,7 @@ def cv_predict(
 
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
-    X, y, indices_array = drop_nan(X, y, indices_array)
+    X, y, indices_array = drop_nan_rows(X, y, indices_array)
 
     # Predict using cross_val_predict
     plots = []
@@ -285,12 +319,12 @@ def cv_predict(
 
         plot = _y2raster(y_pred, indices_array, shape)
         plots.append(plot)
-        rgb_plot = raster2rgb(plot, bands, rgb_bands)
+        rgb_plot = _raster2rgb(plot, bands, rgb_bands)
         rgb_plots.append(rgb_plot)
 
     # Create ground truth image
     gt_plot = _y2raster(y, indices_array, shape)
-    rgb_gt_plot = raster2rgb(gt_plot, bands, rgb_bands)
+    rgb_gt_plot = _raster2rgb(gt_plot, bands, rgb_bands)
 
     # Prepare plots for plotting by normalizing and removing nan
     maximum = np.nanmax(

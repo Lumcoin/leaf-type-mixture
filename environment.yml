@@ -5,6 +5,7 @@ channels:
 dependencies:
   - python=3.10
   - ipykernel
+  - seaborn
   - scikit-elm
   - scikit-optimize
   - dill
