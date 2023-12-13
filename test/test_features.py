@@ -1,9 +1,10 @@
 # pylint: disable=missing-module-docstring
 import numpy as np
+import pandas as pd
 import pytest
 import rasterio
 
-from ltm.features import drop_nan, load_multi_band_raster
+from ltm.features import drop_nan_rows, load_raster
 
 
 @pytest.fixture(name="X_path")
@@ -43,31 +44,32 @@ def fixture_y_path(tmp_path):
 
 
 def test_load_X_and_band_names(X_path):  # pylint: disable=invalid-name
-    X, band_names = load_multi_band_raster(
-        X_path
-    )  # pylint: disable=invalid-name
-    assert isinstance(X, np.ndarray)
-    assert isinstance(band_names, list)
+    X = load_raster(X_path)  # pylint: disable=invalid-name
+    band_names = list(X.columns)
+    assert isinstance(X, pd.DataFrame)
     assert X.shape == (600, 10)
     assert len(band_names) == 10
     assert band_names[0] == "Mean B1"
 
 
 def test_load_y(y_path):
-    y, _ = load_multi_band_raster(y_path)
-    assert isinstance(y, np.ndarray)
-    assert y.shape == (200, 1)
+    y = load_raster(y_path)
+    assert isinstance(y, pd.Series)
+    assert len(y) == 200
 
 
 def test_drop_nan():
     X = np.array(  # pylint: disable=invalid-name
         [[1, 2, np.nan], [4, np.nan, 6], [7, 8, 9]]
     )
+    X = pd.DataFrame(X)
     y = np.array([0, 1, 0])
-    X_clean, y_clean = drop_nan(X, y)  # pylint: disable=invalid-name
-    assert isinstance(X_clean, np.ndarray)
-    assert isinstance(y_clean, np.ndarray)
-    assert X_clean.shape == (1, 3)
-    assert y_clean.shape == (1,)
-    assert X_clean[0, 0] == 7
-    assert y_clean[0] == 0
+    y = pd.Series(y)
+    X_clean, y_clean = drop_nan_rows(X, y)  # pylint: disable=invalid-name
+    assert isinstance(X_clean, pd.DataFrame)
+    assert isinstance(y_clean, pd.Series)
+    assert len(X_clean.columns) == 3
+    assert len(X_clean) == 1
+    assert len(y_clean) == 1
+    assert X_clean.values[0, 0] == 7
+    assert y_clean.values[0] == 0

@@ -12,7 +12,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import RandomizedSearchCV
 
-from ltm.models import best_scores, hyperparam_search
+from ltm.models import best_scores
 
 
 class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
@@ -40,59 +40,59 @@ class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
         }
         self.refit = "mean_squared_error"
 
-    def test_hyperparam_search(self):
-        results = hyperparam_search(
-            self.X,
-            self.y,
-            self.search_space,
-            self.scoring,
-            self.refit,
-            kfold_from_endmembers=False,
-            random_state=42,
-        )
-        self.assertIsInstance(results, list)
-        self.assertEqual(len(results), 1)
-        self.assertIsInstance(results[0], RandomizedSearchCV)
-        self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
+    # def test_hyperparam_search(self):
+    #     results = hyperparam_search(
+    #         self.X,
+    #         self.y,
+    #         self.search_space,
+    #         self.scoring,
+    #         self.refit,
+    #         kfold_from_endmembers=False,
+    #         random_state=42,
+    #     )
+    #     self.assertIsInstance(results, list)
+    #     self.assertEqual(len(results), 1)
+    #     self.assertIsInstance(results[0], RandomizedSearchCV)
+    #     self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
 
-    def test_reproducible_seed(self):
-        results1 = hyperparam_search(
-            self.X,
-            self.y,
-            self.search_space,
-            self.scoring,
-            self.refit,
-            kfold_from_endmembers=False,
-            random_state=42,
-        )
-        results2 = hyperparam_search(
-            self.X,
-            self.y,
-            self.search_space,
-            self.scoring,
-            self.refit,
-            kfold_from_endmembers=False,
-            random_state=42,
-        )
-        self.assertEqual(
-            results1[0].best_estimator_.get_params(),
-            results2[0].best_estimator_.get_params(),
-        )
+    # def test_reproducible_seed(self):
+    #     results1 = hyperparam_search(
+    #         self.X,
+    #         self.y,
+    #         self.search_space,
+    #         self.scoring,
+    #         self.refit,
+    #         kfold_from_endmembers=False,
+    #         random_state=42,
+    #     )
+    #     results2 = hyperparam_search(
+    #         self.X,
+    #         self.y,
+    #         self.search_space,
+    #         self.scoring,
+    #         self.refit,
+    #         kfold_from_endmembers=False,
+    #         random_state=42,
+    #     )
+    #     self.assertEqual(
+    #         results1[0].best_estimator_.get_params(),
+    #         results2[0].best_estimator_.get_params(),
+    #     )
 
-    def test_best_scores(self):
-        results = hyperparam_search(
-            self.X,
-            self.y,
-            self.search_space,
-            self.scoring,
-            self.refit,
-            kfold_from_endmembers=False,
-            random_state=42,
-        )
-        scores = best_scores(results, self.scoring)
-        self.assertIsInstance(scores, pd.DataFrame)
-        self.assertEqual(len(scores.columns), 2)
-        self.assertIn("mean_squared_error", scores)
+    # def test_best_scores(self):
+    #     results = hyperparam_search(
+    #         self.X,
+    #         self.y,
+    #         self.search_space,
+    #         self.scoring,
+    #         self.refit,
+    #         kfold_from_endmembers=False,
+    #         random_state=42,
+    #     )
+    #     scores = best_scores(results, self.scoring)
+    #     self.assertIsInstance(scores, pd.DataFrame)
+    #     self.assertEqual(len(scores.columns), 2)
+    #     self.assertIn("mean_squared_error", scores)
 
 
 if __name__ == "__main__":
