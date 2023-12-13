@@ -45,8 +45,8 @@ def load_raster(
     raster_path: str,
     monochrome_as_dataframe: bool = False,
 ) -> pd.DataFrame | pd.Series:
-    """Loads a raster and returns the data ready
-    to use with sklearn and band names.
+    """Loads a raster and returns the data ready to use with sklearn and band
+    names.
 
     Args:
         raster_path:
