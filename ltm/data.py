@@ -29,6 +29,7 @@ Typical usage example:
 """
 
 import datetime
+import math
 from itertools import product
 from pathlib import Path
 from typing import List, Tuple
@@ -44,6 +45,17 @@ import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
 from typeguard import typechecked
+
+BROADLEAF_AREA = "Broadleaf Area"
+CONIFER_AREA = "Conifer Area"
+LEAF_TYPE_MIXTURE = "Leaf Type Mixture"
+
+
+@typechecked
+def _initialize_ee() -> None:
+    if not ee.data._credentials:
+        print("Initializing Earth Engine API...")
+        ee.Initialize()
 
 
 @typechecked
@@ -74,14 +86,36 @@ def _split_time_window(
 
 
 @typechecked
+def _get_roi_scale_crs(
+    y_path: str,
+) -> Tuple[ee.Geometry, float, str]:
+    # Get region of interest (ROI), scale, and coordinate reference system (CRS)
+    with rasterio.open(y_path) as src:
+        crs = src.crs.to_string()
+        res = src.res
+        if res[0] != res[1]:
+            raise ValueError("resolution is not square!")
+        scale = res[0]
+        bounds = src.bounds
+
+    fc = ee.FeatureCollection(
+        [
+            ee.Geometry.Point([x, y], proj=crs)
+            for x, y in product(bounds[::2], bounds[1::2])
+        ]
+    )
+    roi = fc.geometry().bounds(0.01, proj=crs)
+
+    return roi, scale, crs
+
+
+@typechecked
 def _download_image(
     image: ee.Image,
-    scale: float,
-    crs: str,
 ) -> requests.Response:
     download_params = {
-        "scale": scale,
-        "crs": crs,
+        "scale": image.projection().nominalScale().getInfo(),
+        "crs": image.projection().getInfo()["crs"],
         "format": "GEO_TIFF",
     }
     url = image.getDownloadURL(download_params)
@@ -112,12 +146,11 @@ def _image_response2file(
 def _save_image(
     image: ee.Image,
     file_path: str,
-    scale: float,
-    crs: str,
 ) -> None:
     try:
-        image_response = _download_image(image, scale, crs)
-        mask_response = _download_image(image.mask(), scale, crs)
+        image = image.toDouble()
+        image_response = _download_image(image)
+        mask_response = _download_image(image.mask())
     except ee.ee_exception.EEException as exc:
         raise ValueError(
             "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog online."
@@ -196,6 +229,23 @@ def _compute_area(
     fc_area = fc_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
 
     return fc_area
+
+
+@typechecked
+def _path_check(
+    *paths: str,
+    suffix: str,
+    check_parent: bool = True,
+    check_self: bool = False,
+) -> None:
+    for path in paths:
+        pathlib = Path(path)
+        if pathlib.suffix != suffix:
+            raise ValueError(f"{path} must end with {suffix}")
+        if check_parent and not pathlib.parent.exists():
+            raise ValueError(f"{path} parent directory does not exist")
+        if check_self and not pathlib.exists():
+            raise ValueError(f"{path} does not exist")
 
 
 @typechecked
@@ -288,7 +338,9 @@ def show_timeseries(
     max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
 
     # Plot the rasters below each other
-    fig, axs = plt.subplots(nrows=6, figsize=(10, 10))
+    fig, axs = plt.subplots(nrows=num_composites, figsize=(10, 10))
+    if num_composites == 1:
+        axs = np.array([axs])
     fig.tight_layout()
     for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
         # normalize values and apply gamma correction
@@ -304,6 +356,11 @@ def show_timeseries(
     plt.show()
 
     return fig, axs
+
+
+@typechecked
+def shapefile2mask():
+    pass
 
 
 @typechecked
@@ -326,9 +383,7 @@ def compute_label(
         A string representing the file path to the raster with values between 0 and 1 for the leaf type mixture. 1 being broadleaf and 0 being conifer.
     """
     # Initialize Earth Engine API
-    if not ee.data._credentials:
-        print("Initializing Earth Engine API...")
-        ee.Initialize()
+    _initialize_ee()
     print("Preparing labels...")
 
     # Ensure proper plot DataFrame format
@@ -415,11 +470,11 @@ def compute_label(
     if areas_as_y:
         y = broadleaf_area.addBands(conifer_area)
         y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
-        y = y.rename(["Broadleaf Area", "Conifer Area"])
+        y = y.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
         y = broadleaf_area.divide(total_area)
         y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
-        y = y.rename("Leaf Type Mixture")
+        y = y.rename(LEAF_TYPE_MIXTURE)
 
     # Clip to roi and reproject
     y = y.clip(roi)
@@ -427,7 +482,7 @@ def compute_label(
 
     # Save y
     print("Computing labels...")
-    _save_image(y, y_path, scale=scale, crs=crs)
+    _save_image(y, y_path)
 
     return y_path
 
@@ -447,6 +502,8 @@ def sentinel_composite(
 ) -> str:
     """Creates a composite from many Sentinel 2 satellite images for a given
     label image.
+
+    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest.
 
     Args:
         y_path_from:
@@ -474,10 +531,8 @@ def sentinel_composite(
         A string representing the file path to the composite raster.
     """
     # Initialize Earth Engine API
-    if not ee.data._credentials:
-        print("Initializing Earth Engine API...")
-        ee.Initialize()
-    print("Preparing data...")
+    _initialize_ee()
+    print("Preparing Sentinel-2 data...")
 
     # Ensure proper time window format and convert to strings
     date_format = "%Y-%m-%d"
@@ -495,18 +550,7 @@ def sentinel_composite(
         )
 
     # Ensure proper path format
-    X_pathlib = Path(X_path_to)
-    y_pathlib = Path(y_path_from)
-    if X_pathlib.suffix != ".tif" or y_pathlib.suffix != ".tif":
-        raise ValueError("X_path and y_path must be strings ending in .tif")
-    if not X_pathlib.parent.exists():
-        raise ValueError(
-            f"X_path parent directory does not exist: {X_pathlib.parent}"
-        )
-    if not y_pathlib.parent.exists():
-        raise ValueError(
-            f"y_path parent directory does not exist: {y_pathlib.parent}"
-        )
+    _path_check(y_path_from, X_path_to, suffix=".tif")
 
     # Check if indices are valid eemont indices
     if indices is not None:
@@ -589,21 +633,7 @@ def sentinel_composite(
             )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
-    with rasterio.open("../data/processed/separate_y.tif") as src:
-        crs = src.crs.to_string()
-        res = src.res
-        if res[0] != res[1]:
-            raise ValueError("resolution is not square!")
-        scale = res[0]
-        bounds = src.bounds
-
-    fc = ee.FeatureCollection(
-        [
-            ee.Geometry.Point([x, y], proj=crs)
-            for x, y in product(bounds[::2], bounds[1::2])
-        ]
-    )
-    roi = fc.geometry().bounds(0.01, proj=crs)
+    roi, scale, crs = _get_roi_scale_crs(y_path_from)
 
     # Loop through time windows
     data = []
@@ -657,6 +687,102 @@ def sentinel_composite(
 
     # Save data (X)
     print("Computing data...")
-    _save_image(data, X_path_to, scale=scale, crs=crs)
+    _save_image(data, X_path_to)
+
+    return X_path_to
+
+
+@typechecked
+def palsar_raster(
+    y_path_from: str,
+    X_path_to: str,
+    timestamp: datetime.date | str,
+    sin_cos_angle: bool = True,
+    exclude_future: bool = False,
+) -> str:
+    """Creates a raster containing PALSAR data for a given label image.
+
+    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. The "Global PALSAR-2/PALSAR Yearly Mosaic, version 2" dataset is used for the raster. It is available at https://developers.google.com/earth-engine/datasets/catalog/JAXA_ALOS_PALSAR_YEARLY_SAR_EPOCH and covers the years 2015 to 2022.
+
+    Args:
+        y_path_from:
+            A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
+        X_path_to:
+            A string representing the output file path to save the raster.
+        timestamp:
+            A date or string representing the timestamp of the raster. As the images are sparse, the closest image to the timestamp is used.
+        sin_cos_angle:
+            A boolean indicating whether to include sine and cosine of the angle as bands in the raster instead of the angle. This prevents discontinuity between 359° and 0°. Defaults to True.
+        exclude_future:
+            A boolean indicating whether to exclude future images past the 'timestamp'. This would make sense for forests that are drastically changed by an event like a storm. Defaults to False.
+
+    Returns:
+        A string representing the file path to the raster.
+    """
+    # Initialize Earth Engine API
+    _initialize_ee()
+    print("Preparing PALSAR data...")
+
+    # Ensure proper path format
+    _path_check(y_path_from, X_path_to, suffix=".tif")
+
+    # Ensure proper timestamp format and convert to string
+    date_format = "%Y-%m-%d"
+    if not isinstance(timestamp, datetime.date):
+        timestamp = datetime.datetime.strptime(timestamp, date_format)
+    timestamp = timestamp.strftime(date_format)
+
+    # Convert timestamp to milliseconds
+    milliseconds = ee.Date(timestamp).millis().getInfo()
+
+    # Get region of interest (ROI), scale, and coordinate reference system (CRS)
+    roi, scale, crs = _get_roi_scale_crs(y_path_from)
+
+    # Get PALSAR image collection
+    palsar = ee.ImageCollection("JAXA/ALOS/PALSAR/YEARLY/SAR_EPOCH")
+    if exclude_future:
+        palsar = palsar.filterDate(0, milliseconds + 1)
+
+    # Compute time difference between timestamp and image timestamps
+    def add_time_delta(image):
+        # Compute the time difference in milliseconds
+        image_timestamp = ee.Number(image.get("system:time_start"))
+        target_timestamp = ee.Number(milliseconds)
+
+        time_delta = image_timestamp.subtract(target_timestamp).abs()
+
+        # Add the time delta as a new property to the image
+        return image.set("time_delta", time_delta)
+
+    # Sort the image collection by time delta and create a single image
+    palsar = palsar.map(add_time_delta)
+    palsar = palsar.sort(
+        "time_delta", False
+    )  # False is necessary, as mosaic prioritizes last to first
+    palsar = palsar.mosaic()
+
+    # Compute sine and cosine of the angle
+    sin_band = (
+        palsar.select("angle").multiply(math.pi / 180).sin().rename("sin_angle")
+    )
+    cos_band = (
+        palsar.select("angle").multiply(math.pi / 180).cos().rename("cos_angle")
+    )
+    palsar = palsar.addBands([sin_band, cos_band])
+
+    remaining_bands = ["HH", "HV"]
+    if sin_cos_angle:
+        remaining_bands += ["sin_angle", "cos_angle"]
+    else:
+        remaining_bands += ["angle"]
+    palsar = palsar.select(remaining_bands)
+
+    # Resample
+    palsar = palsar.clip(roi)
+    palsar = palsar.reproject(scale=scale, crs=crs)
+
+    # Save data (X)
+    print("Computing data...")
+    _save_image(palsar, X_path_to)
 
     return X_path_to

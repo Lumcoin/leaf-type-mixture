@@ -1,4 +1,5 @@
 # pylint: disable=missing-module-docstring
+# https://packaging.python.org/en/latest/guides/tool-recommendations/
 from setuptools import find_packages, setup
 
 setup(

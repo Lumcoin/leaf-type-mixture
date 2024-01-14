@@ -39,7 +39,9 @@ Typical usage example: TODO
         random_state=42,
     )
 """
+import io
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 import matplotlib.pyplot as plt
@@ -56,7 +58,8 @@ from sklearn.model_selection import (
 )
 from typeguard import typechecked
 
-from ltm.features import drop_nan_rows, load_raster
+from ltm.data import BROADLEAF_AREA, CONIFER_AREA, LEAF_TYPE_MIXTURE
+from ltm.features import drop_nan_rows, load_raster, np2pd_like
 
 
 @typechecked
@@ -148,18 +151,36 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
 @typechecked
 def _y2raster(
-    y: np.ndarray, indices: np.ndarray, plot_shape: Tuple[int, int, int]
+    y: np.ndarray | pd.Series | pd.DataFrame,
+    indices: np.ndarray,
+    plot_shape: Tuple[int, int, int],
+    area2mixture: bool = False,
 ) -> np.ndarray:
-    if len(y.shape) == 1:
-        y = np.expand_dims(y, axis=1)
+    if isinstance(y, np.ndarray):
+        y_values = y
+    else:
+        y_values = y.values
+
+    if len(y_values.shape) == 1:
+        y_values = np.expand_dims(y_values, axis=1)
 
     # Create raster from y with the help of an indices array
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
-    raster[indices] = y
+    raster[indices] = y_values
     raster = raster.reshape(
         plot_shape[1], plot_shape[2], plot_shape[0]
     ).transpose(2, 0, 1)
+
+    # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
+    if area2mixture:
+        columns = list(y.columns)
+        broadleaf_index = columns.index(BROADLEAF_AREA)
+        conifer_index = columns.index(CONIFER_AREA)
+        broadleaf = raster[broadleaf_index, :, :]
+        conifer = raster[conifer_index, :, :]
+        raster = broadleaf / (broadleaf + conifer)
+        raster = np.expand_dims(raster, axis=0)
 
     return raster
 
@@ -196,6 +217,27 @@ def _raster2rgb(
     rgb_plot = np.dstack(rgb_plot)
 
     return rgb_plot
+
+
+@typechecked
+def plot2array(fig: plt.Figure | None = None) -> np.ndarray:
+    """Converts a matplotlib figure to a numpy array.
+
+    Args:
+        fig:
+            Matplotlib figure to convert. Defaults to None, which will use the current figure.
+
+    Returns:
+        Numpy array of the figure.
+    """
+    with io.BytesIO() as buff:
+        if fig is None:
+            fig = plt.gcf()
+        fig.savefig(buff, format="png")
+        buff.seek(0)
+        im = plt.imread(buff)
+
+    return im
 
 
 @typechecked
@@ -269,6 +311,7 @@ def best_scores(
     return df
 
 
+# TODO: improve formatting of figure
 @typechecked
 def cv_predict(
     search_results: List[RandomizedSearchCV],
@@ -276,6 +319,8 @@ def cv_predict(
     y_path: str | List[str],
     rgb_bands: List[str] | None = None,
     cv: int | BaseCrossValidator | None = None,
+    area2mixture: bool = False,
+    save_path: str | None = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
     """Predicts the labels using cross_val_predict and plots the results for
     each model.
@@ -290,22 +335,46 @@ def cv_predict(
         rgb_bands:
             A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
         cv:
-            An integer for the number of folds or a BaseCrossValidator object. Defaults to None.
+            An integer for the number of folds or a BaseCrossValidator object for performing cross validation. Defaults to None.
         random_state:
             Integer to be used as random state for reproducible results.
+        area2mixture:
+            Whether to show the computed leaf type mixture from leaf type areas as labels. Defaults to False.
+        save_path:
+            Path to save the plot to with either JPG or PNG suffix. Defaults to None.
 
     Returns:
         Tuple of ground truth image and list of predicted images.
     """
+    # Check for valid save_path and valid suffix
+    if save_path is not None:
+        save_path_obj = Path(save_path)
+        if save_path_obj.suffix not in [".jpg", ".png"]:
+            raise ValueError(
+                f"save_path must have suffix '.jpg' or '.png' or be None: {save_path}"
+            )
+        if not save_path_obj.parent.exists():
+            raise ValueError(
+                f"Directory of save_path does not exist: {save_path_obj.parent}"
+            )
+
     # Load data and plot shape
-    X, _ = load_raster(X_path)
-    y, _ = load_raster(y_path)
-    if y.shape[1] == 1:
-        y = y.ravel()
+    X = load_raster(X_path)
+    y = load_raster(y_path)
 
     with rasterio.open(y_path) as src:
         bands = src.descriptions
         shape = src.read().shape
+
+    # Check if y has only one band and area2mixture is True -> raise error
+    if area2mixture:
+        if shape[0] > 1:
+            bands = tuple([LEAF_TYPE_MIXTURE])
+        else:
+            print(
+                "'area2mixture=True' is ignored: y has only one band, so computing the mixture from area is not possible."
+            )
+            area2mixture = False
 
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
@@ -316,14 +385,17 @@ def cv_predict(
     rgb_plots = []
     for result in search_results:
         y_pred = cross_val_predict(result.best_estimator_, X, y, cv=cv)
+        y_pred = np2pd_like(y_pred, y)
 
-        plot = _y2raster(y_pred, indices_array, shape)
+        plot = _y2raster(
+            y_pred, indices_array, shape, area2mixture=area2mixture
+        )
         plots.append(plot)
         rgb_plot = _raster2rgb(plot, bands, rgb_bands)
         rgb_plots.append(rgb_plot)
 
     # Create ground truth image
-    gt_plot = _y2raster(y, indices_array, shape)
+    gt_plot = _y2raster(y, indices_array, shape, area2mixture=area2mixture)
     rgb_gt_plot = _raster2rgb(gt_plot, bands, rgb_bands)
 
     # Prepare plots for plotting by normalizing and removing nan
@@ -349,7 +421,8 @@ def cv_predict(
     ax = plt.subplot()
     ax.imshow(rgb_gt_plot, interpolation="nearest")
     ax.set_title("Ground Truth")
-    plt.show()
+    if save_path is not None:
+        gt_image = plot2array()
 
     # Plot predicted images with title "predicted" and name of regressor as subtitle for each plot
     number_plots = len(rgb_plots)
@@ -365,6 +438,11 @@ def cv_predict(
 
     for ax in axs[len(rgb_plots) :]:
         ax.axis("off")
+
+    if save_path is not None:
+        pred_image = plot2array(fig)
+        image = np.concatenate((gt_image, pred_image), axis=0)
+        plt.imsave(save_path, image)
 
     plt.show()
 

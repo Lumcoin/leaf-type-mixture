@@ -41,6 +41,42 @@ from typeguard import typechecked
 
 
 @typechecked
+def np2pd_like(
+    np_obj: np.ndarray,
+    like_pd_obj: pd.Series | pd.DataFrame,
+) -> pd.Series | pd.DataFrame:
+    """Converts a numpy array to a pandas Series or DataFrame with the same column names or series name as the given pandas object.
+
+    Args:
+        np_obj:
+            A numpy array.
+        like_pd_obj:
+            A pandas Series or DataFrame.
+
+    Returns:
+        A pandas Series or DataFrame with the same column names or series name as the given pandas object.
+    """
+    if isinstance(like_pd_obj, pd.Series):
+        if np_obj.ndim != 1:
+            raise ValueError(
+                f"Expected 1-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
+            )
+        return pd.Series(np_obj, name=like_pd_obj.name)
+
+    if isinstance(like_pd_obj, pd.DataFrame):
+        if np_obj.ndim != 2:
+            raise ValueError(
+                f"Expected 2-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
+            )
+        if np_obj.shape[1] != len(like_pd_obj.columns):
+            raise ValueError(
+                f"Expected numpy array with {len(like_pd_obj.columns)} columns, got {np_obj.shape[1]} columns instead."
+            )
+
+    return pd.DataFrame(np_obj, columns=like_pd_obj.columns)
+
+
+@typechecked
 def load_raster(
     raster_path: str,
     monochrome_as_dataframe: bool = False,
@@ -174,14 +210,19 @@ def save_raster(
 
 @typechecked
 def drop_nan_rows(
-    *dfs: pd.Series | pd.DataFrame,
+    *data: pd.Series | pd.DataFrame | np.ndarray,
     reset_index: bool = False,
-) -> pd.Series | pd.DataFrame | Tuple[pd.Series | pd.DataFrame, ...]:
+) -> (
+    pd.Series
+    | pd.DataFrame
+    | np.ndarray
+    | Tuple[pd.Series | pd.DataFrame | np.ndarray, ...]
+):
     """Drops rows with any NaN values.
 
     Args:
-        arrays:
-            Pandas Series or DataFrames with the same number of rows.
+        rows:
+            Pandas Series, DataFrames or Numpy Array with the same number of rows.
         reset_index:
             A boolean that resets the indices of the results if true. Defaults to False.
 
@@ -189,18 +230,21 @@ def drop_nan_rows(
         A pandas Series or DataFrame or a tuple of such containing the input data without NaN values.
     """
     # Check if all arrays have the same number of rows and at max two dimensions
-    num_rows = set(len(df) for df in dfs)
+    num_rows = set(len(datum) for datum in data)
     if len(num_rows) != 1:
         raise ValueError("All arrays must have the same number of rows.")
     num_rows = num_rows.pop()
 
     # Drop rows with NaN values
     mask = np.ones(num_rows, dtype=bool)
-    for df in dfs:
-        if isinstance(df, pd.Series):
-            mask &= ~df.isna().values
-        else:
-            mask &= ~df.isna().any(axis=1)
+    for datum in data:
+        if isinstance(datum, pd.Series):
+            mask &= ~datum.isna().values
+        elif isinstance(datum, pd.DataFrame):
+            mask &= ~datum.isna().any(axis=1)
+        elif isinstance(datum, np.ndarray):
+            datum = np.reshape(datum, (num_rows, -1))
+            mask &= ~np.isnan(datum).any(axis=1)
 
     # Raise an error if all rows are dropped
     if not mask.any():
@@ -209,10 +253,15 @@ def drop_nan_rows(
         )
 
     # Prepare result
-    result = tuple(df[mask] for df in dfs)
+    result = tuple(datum[mask] for datum in data)
     if reset_index:
-        result = tuple(df.reset_index(drop=True) for df in result)
-    if len(dfs) == 1:
+        result = tuple(
+            datum
+            if isinstance(datum, np.ndarray)
+            else datum.reset_index(drop=True)
+            for datum in result
+        )
+    if len(data) == 1:
         result = result[0]
 
     return result
@@ -399,7 +448,7 @@ def dendrogram_dim_red(
     band_names = list(X.columns)
     if index != band_names or columns != band_names:
         raise ValueError(
-            "Similarity matrix must be square with band_names as index and columns."
+            "Similarity matrix must be square with column names of X as index and columns."
         )
 
     # Compute linkage

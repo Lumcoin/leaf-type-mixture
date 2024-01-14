@@ -3,6 +3,10 @@ Leaf Type Mixture
 
 Leaf type mixture prediction with machine learning from satellite data.
 
+> **Disclaimer:** This repository is still under development. The code is not yet ready for production use.
+
+This repository belongs to the paper ---. Thus most functions in this repository are tailored to the use case of leaf type mixture prediction. However some functions might be useful for general use cases. For example you can create a Sentinel 2 composite for a given label raster in GeoTIFF format. There are functions for reading raster data as pd.DataFrames, etc. General use cases are demonstrated in general_use_cases.ipynb.
+
 Requires Python>=3.10
 
 If you are new to python, we recommend to install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and create a environment called "ltm" using `conda create -n ltm python=3.10 ipykernel`. You can then activate the environment using `conda activate ltm` and install the "ltm" package of this repository using:
