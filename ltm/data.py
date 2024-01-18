@@ -33,7 +33,7 @@ import json
 import math
 from itertools import product
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Set, Tuple
 
 import ee
 import eemont
@@ -261,6 +261,70 @@ def _path_check(
             raise ValueError(f"{path} parent directory does not exist")
         if check_self and not pathlib.exists():
             raise ValueError(f"{path} does not exist")
+
+
+@typechecked
+def list_reducers() -> List[str]:
+    """Lists all valid reducers in the Earth Engine API.
+
+    Returns:
+        A list of strings representing the valid reducers.
+    """
+    # Initialize Earth Engine API
+    _initialize_ee()
+
+    # Get all valid reducers
+    valid_reducers = []
+    for attr in dir(ee.Reducer):
+        try:
+            if isinstance(getattr(ee.Reducer, attr)(), ee.Reducer):
+                valid_reducers.append(attr)
+        except (TypeError, ee.ee_exception.EEException):
+            continue
+
+    return valid_reducers
+
+
+@typechecked
+def list_bands(level_2a: bool = True) -> List[str]:
+    """Lists all valid bands in the Earth Engine API.
+
+    Args:
+        level_2a:
+            A boolean indicating whether to list bands from Level-2A or Level-1C Sentinel 2 data. Level-2A if True. Defaults to True.
+
+    Returns:
+        A list of strings representing the valid bands.
+    """
+    # Initialize Earth Engine API
+    _initialize_ee()
+
+    # Get all valid bands
+    if level_2a:
+        s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+    else:
+        s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+    bands = s2.first().bandNames().getInfo()
+
+    return bands
+
+
+@typechecked
+def list_indices() -> List[str]:
+    """Lists all valid indices for Sentinel-2.
+
+    Returns:
+        A list of strings representing the valid indices.
+    """
+    # Get all valid indices
+    indices = eemont.common.indices()
+    s2_indices = [
+        index
+        for index in indices
+        if "Sentinel-2" in eemont.common.indices()[index]["platforms"]
+    ]
+
+    return s2_indices
 
 
 @typechecked
@@ -564,10 +628,9 @@ def sentinel_composite(
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
     indices: List[str] | None = None,
-    level_2a: bool = False,
+    level_2a: bool = True,
     sentinel_bands: List[str] | None = None,
     remove_clouds: bool = True,
-    remove_qa: bool = True,
 ) -> str:
     """Creates a composite from many Sentinel 2 satellite images for a given
     label image.
@@ -584,17 +647,15 @@ def sentinel_composite(
         num_composites:
             An integer representing the number of composites to create. Defaults to 1.
         temporal_reducers:
-            A list of strings representing the temporal reducers to use when creating the composite. See https://developers.google.com/earth-engine/guides/reducers_intro for more information. Defaults to ['mean'] if None.
+            A list of strings representing the temporal reducers to use when creating the composite. Run data.list_reducers() or see https://developers.google.com/earth-engine/guides/reducers_intro for more information. Defaults to ['mean'] if None.
         indices:
-            A list of strings representing the spectral indices to add to the composite as additional bands. See https://eemont.readthedocs.io/en/latest/guide/spectralIndices.html for more information.
+            A list of strings representing the spectral indices to add to the composite as additional bands. Run data.list_indices() or see https://eemont.readthedocs.io/en/latest/guide/spectralIndices.html for more information.
         level_2a:
-            A boolean indicating whether to use Level-2A or Level-1C Sentinel 2 data.
+            A boolean indicating whether to use Level-2A or Level-1C Sentinel 2 data. Defaults to True.
         sentinel_bands:
-            A list of strings representing the bands to use from the Sentinel 2 data EXCLUDING all QA bands. To include QA bands set remove_qa to False. For available bands, see https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_HARMONIZED#bands (Level-1C) and https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#bands (Level-2A). All non-QA bands are used if sentinel_bands is None. Defaults to None.
+            A list of strings representing the bands to use from the Sentinel 2 data. For available bands run data.list_bands() or see https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_HARMONIZED#bands (Level-1C) and https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#bands (Level-2A). All bands are used if sentinel_bands is None. Defaults to None.
         remove_clouds:
-            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band.
-        remove_qa:
-            A boolean indicating whether to remove the QA bands from the satellite images.
+            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band. Defaults to True.
 
     Returns:
         A string representing the file path to the composite raster.
@@ -614,11 +675,9 @@ def sentinel_composite(
 
     # Check if indices are valid eemont indices
     if indices is not None:
+        valid_indices = list_indices()
         invalid_indices = [
-            index
-            for index in indices
-            if index not in eemont.common.indices()
-            or "Sentinel-2" not in eemont.common.indices()[index]["platforms"]
+            index for index in indices if index not in valid_indices
         ]
         if invalid_indices:
             raise ValueError(
@@ -642,13 +701,7 @@ def sentinel_composite(
         )
 
     # Check if all reducers are valid
-    valid_reducers = set()
-    for attr in dir(ee.Reducer):
-        try:
-            if isinstance(getattr(ee.Reducer, attr)(), ee.Reducer):
-                valid_reducers.add(attr)
-        except (TypeError, ee.ee_exception.EEException):
-            continue
+    valid_reducers = list_reducers()
     invalid_reducers = [
         reducer
         for reducer in temporal_reducers
@@ -660,75 +713,43 @@ def sentinel_composite(
         )
 
     # Check if all bands are valid. Use all bands if sentinel_bands is None
-    available_bands = [
-        "B1",
-        "B2",
-        "B3",
-        "B4",
-        "B5",
-        "B6",
-        "B7",
-        "B8",
-        "B8A",
-        "B9",
-        "B10",
-        "B11",
-        "B12",
-    ]
-    if level_2a:
-        available_bands += [
-            "AOT",
-            "WVP",
-            "SCL",
-            "TCI_R",
-            "TCI_G",
-            "TCI_B",
-            "MSK_CLDPRB",
-            "MSK_SNWPRB",
-        ]
-        available_bands.pop(available_bands.index("B10"))
-
+    valid_bands = list_bands(level_2a)
     if sentinel_bands is None:
-        sentinel_bands = available_bands
-    else:
-        illegal_bands = [b for b in sentinel_bands if b not in available_bands]
-        if any(illegal_bands):
-            raise ValueError(
-                f"{illegal_bands} not available in: {available_bands}"
-            )
+        sentinel_bands = valid_bands
+    illegal_bands = [b for b in sentinel_bands if b not in valid_bands]
+    if any(illegal_bands):
+        raise ValueError(f"{illegal_bands} not available in: {valid_bands}")
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(y_path_from)
 
+    # Get Sentinel 2 image collection filtered by bounds
+    if level_2a:
+        s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+    else:
+        s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+    s2 = s2.filterBounds(roi)
+
     # Loop through time windows
     data = []
     for start, end in time_windows:
-        # Get Sentinel 2 image collection
-        if level_2a:
-            s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        else:
-            s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
-
         # Filter by roi and timewindow
-        s2 = s2.filterBounds(roi).filterDate(start, end)
+        s2_window = s2.filterDate(start, end)
 
         # Remove clouds
         if remove_clouds:
-            s2 = s2.map(_mask_s2_clouds)
+            s2_window = s2_window.map(_mask_s2_clouds)
 
         # Add indices before possibly removing bands necessary for computing indices
         if indices:
-            s2 = s2.spectralIndices(indices)
+            s2_window = s2_window.spectralIndices(indices)
 
-        # Remove QA bands
-        remaining_bands = sentinel_bands
-        if not remove_qa:
-            remaining_bands += ["QA20", "QA40", "QA60"]
-        s2 = s2.select(remaining_bands)
+        # Select bands
+        s2_window = s2_window.select(sentinel_bands)
 
         # Reduce by temporal_reducers
         reduced_images = [
-            s2.reduce(getattr(ee.Reducer, temporal_reducer)())
+            s2_window.reduce(getattr(ee.Reducer, temporal_reducer)())
             for temporal_reducer in temporal_reducers
         ]
 
