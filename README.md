@@ -44,7 +44,7 @@ coverage report -m
 
 Reinstall conda environment:
 ```bash
-~/mambaforge/Scripts/activate.bat
+%USERPROFILE%/mambaforge/Scripts/activate.bat
 mamba activate base
 mamba env remove -n ltm
 mamba clean -a -y

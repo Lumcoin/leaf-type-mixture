@@ -20,6 +20,7 @@ setup(
         "pyproj",
         "requests",
         "scikit-learn",
+        "SciencePlots",
         "tqdm",
         "typeguard",
         "utm",
