@@ -576,7 +576,7 @@ def sentinel_composite(
 
     Args:
         y_path_from:
-            A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
+            A string representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and resolution/pixel size of the image.
         X_path_to:
             A string representing the output file path to save the composite raster.
         time_window:
