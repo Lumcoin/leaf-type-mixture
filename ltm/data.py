@@ -56,7 +56,9 @@ LEAF_TYPE_MIXTURE = "Leaf Type Mixture"
 
 @typechecked
 def _initialize_ee() -> None:
-    if not ee.data._credentials:
+    try:
+        getattr(ee.Reducer, "mean")
+    except AttributeError:
         print("Initializing Earth Engine API...")
         ee.Initialize()
 
@@ -504,16 +506,16 @@ def shape2mask(
 def compute_label(
     y_path: str,
     plot: pd.DataFrame,
-    areas_as_y: bool = False,
+    area_as_y: bool = False,
 ) -> str:
     """Computes the label for a plot.
 
     Args:
         y_path:
-            A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture. Will not be saved if None. Resulting in a speedup.
+            A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture.
         plot:
             A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
-        areas_as_y:
+        area_as_y:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
 
     Returns:
@@ -525,13 +527,15 @@ def compute_label(
 
     # Ensure proper plot DataFrame format
     expected_dtypes = {
-        "longitude": np.float64,
-        "latitude": np.float64,
-        "dbh": np.float64,
         "broadleaf": np.int8,
+        "dbh": np.float64,
+        "latitude": np.float64,
+        "longitude": np.float64,
     }
+    expected_columns = set(expected_dtypes.keys())
     plot = plot.rename(columns=str.lower)
-    if set(expected_dtypes.keys()) != set(plot.columns):
+    columns = set(plot.columns)
+    if expected_columns != columns.intersection(expected_columns):
         raise ValueError("Columns do not match expected columns")
     plot = plot.astype(expected_dtypes)
 
@@ -600,7 +604,7 @@ def compute_label(
 
     # Compute y (leaf type mixture) from broadleaf_area and conifer_area
     total_area = broadleaf_area.add(conifer_area)
-    if areas_as_y:
+    if area_as_y:
         y = broadleaf_area.addBands(conifer_area)
         y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
         y = y.rename([BROADLEAF_AREA, CONIFER_AREA])

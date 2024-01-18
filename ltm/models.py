@@ -186,11 +186,41 @@ def _y2raster(
 
 
 @typechecked
-def _raster2rgb(
+def raster2rgb(
     raster: np.ndarray,
-    bands: Tuple[str, ...],
-    rgb_bands: List[str] | None = None,
+    bands: Tuple[str, ...] | None = None,
+    rgb_bands: List[str | None] | None = None,
+    mask_nan: bool = True,
 ) -> np.ndarray:
+    """Creates an RGB image from a rasterio raster.
+
+    Args:
+        raster:
+            Rasterio raster to convert to RGB.
+        bands:
+            Tuple of band names. Must not be None if rgb_bands is not None. Defaults to None.
+        rgb_bands:
+            A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
+        mask_nan:
+            A boolean whether to mask NaN values. If any band has a NaN value, the whole pixel will be masked. Defaults to True.
+
+    Returns:
+        A NumPy array RGB image.
+    """
+    # Check whether bands exists if rgb_bands is not None
+    if rgb_bands is not None and bands is None:
+        raise ValueError("bands must not be None if rgb_bands is not None")
+
+    # Check if bands is equal to the number of bands in raster
+    if bands is not None and len(bands) != raster.shape[0]:
+        raise ValueError(
+            f"bands must have same length as number of bands in raster: {len(bands)} != {raster.shape[0]}"
+        )
+
+    # Default bands to tuple of integers if None
+    if bands is None:
+        bands = tuple(str(number) for number in range(raster.shape[0]))
+
     # Check if rgb_bands has length of three or is None
     if rgb_bands is not None and len(rgb_bands) != 3:
         raise ValueError("rgb_bands must be a list of length 3 or None")
@@ -202,7 +232,7 @@ def _raster2rgb(
         elif len(bands) == 2:
             rgb_bands = [bands[0], bands[1], None]
         else:
-            rgb_bands = bands[:3]
+            rgb_bands = list(bands[:3])
 
     # Create RGB image bands
     rgb_plot = []
@@ -215,6 +245,11 @@ def _raster2rgb(
 
     # Stack RGB image bands
     rgb_plot = np.dstack(rgb_plot)
+
+    # Mask NaN values
+    if mask_nan:
+        nan_mask = np.any(np.isnan(raster), axis=0)
+        rgb_plot[nan_mask] = np.nan
 
     return rgb_plot
 
@@ -391,12 +426,12 @@ def cv_predict(
             y_pred, indices_array, shape, area2mixture=area2mixture
         )
         plots.append(plot)
-        rgb_plot = _raster2rgb(plot, bands, rgb_bands)
+        rgb_plot = raster2rgb(plot, bands, rgb_bands)
         rgb_plots.append(rgb_plot)
 
     # Create ground truth image
     gt_plot = _y2raster(y, indices_array, shape, area2mixture=area2mixture)
-    rgb_gt_plot = _raster2rgb(gt_plot, bands, rgb_bands)
+    rgb_gt_plot = raster2rgb(gt_plot, bands, rgb_bands)
 
     # Prepare plots for plotting by normalizing and removing nan
     maximum = np.nanmax(
