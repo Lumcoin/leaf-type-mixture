@@ -45,7 +45,8 @@ def np2pd_like(
     np_obj: np.ndarray,
     like_pd_obj: pd.Series | pd.DataFrame,
 ) -> pd.Series | pd.DataFrame:
-    """Converts a numpy array to a pandas Series or DataFrame with the same column names or series name as the given pandas object.
+    """Converts a numpy array to a pandas Series or DataFrame with the same
+    column names or series name as the given pandas object.
 
     Args:
         np_obj:

@@ -29,6 +29,7 @@ Typical usage example:
 """
 
 import datetime
+import json
 import math
 from itertools import product
 from pathlib import Path
@@ -36,6 +37,7 @@ from typing import List, Tuple
 
 import ee
 import eemont
+import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -44,6 +46,7 @@ import requests
 import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
+from shapely import MultiPolygon, to_geojson
 from typeguard import typechecked
 
 BROADLEAF_AREA = "Broadleaf Area"
@@ -59,12 +62,26 @@ def _initialize_ee() -> None:
 
 
 @typechecked
+def _sentinel_crs(
+    latitude: float,
+    longitude: float,
+) -> str:
+    zone_number = utm.latlon_to_zone_number(latitude, longitude)
+    is_south = utm.latitude_to_zone_letter(latitude) < "N"
+
+    crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
+    crs = f"EPSG:{crs.to_epsg()}"
+
+    return crs
+
+
+@typechecked
 def _split_time_window(
-    time_window: Tuple[str, str],
+    time_window: Tuple[datetime.date, datetime.date],
     num_splits: int,
-) -> List[Tuple[str, str]]:
-    start = datetime.datetime.strptime(time_window[0], "%Y-%m-%d")
-    end = datetime.datetime.strptime(time_window[1], "%Y-%m-%d")
+) -> List[Tuple[datetime.date, datetime.date]]:
+    start = time_window[0]
+    end = time_window[1]
     delta = (end - start + datetime.timedelta(days=1)) / num_splits
 
     if delta.days < 1:
@@ -75,10 +92,8 @@ def _split_time_window(
     sub_windows = []
     for i in range(num_splits):
         sub_window = (
-            (start + i * delta).strftime("%Y-%m-%d"),
-            (start + (i + 1) * delta - datetime.timedelta(days=1)).strftime(
-                "%Y-%m-%d"
-            ),
+            start + i * delta,
+            start + (i + 1) * delta - datetime.timedelta(days=1),
         )
         sub_windows.append(sub_window)
 
@@ -359,8 +374,66 @@ def show_timeseries(
 
 
 @typechecked
-def shapefile2mask():
-    pass
+def shape2mask(
+    y_path: str,
+    shape: MultiPolygon,
+    crs: str,
+) -> str:
+    """Creates a raster mask from a shape.
+
+    Args:
+        y_path:
+            A string representing the file path to save the raster mask. Cells inside the shape will be 1 and cells outside the shape will be 0. Border cells are proportional to the area inside the shape between 0 and 1.
+        shape:
+            A shapely MultiPolygon representing the shape to create the raster mask from.
+        crs:
+            A string representing the coordinate reference system (CRS) of the shape.
+
+    Returns:
+        The file path to the raster mask as a string.
+    """
+    # Initialize Earth Engine API
+    _initialize_ee()
+    print("Preparing mask...")
+
+    # Ensure proper path format
+    _path_check(y_path, check_parent=True, check_self=False, suffix=".tif")
+
+    # Convert shape to bounds in output crs
+    geo_series = gpd.GeoSeries(shape, crs=crs)
+    geo_series = geo_series.to_crs("EPSG:4326")
+    geojson = to_geojson(geo_series[0])
+    coordinates = json.loads(geojson)["coordinates"]
+    multipolygon = ee.Geometry.MultiPolygon(coordinates)
+
+    # Get CRS in epsg format for center of the shape
+    longitude, latitude = multipolygon.centroid(0.01).coordinates().getInfo()
+    out_crs = _sentinel_crs(latitude, longitude)
+
+    # Check if rectangle has reasonable size
+    shape_area = multipolygon.area(0.01).getInfo()
+    if shape_area == 0:
+        raise ValueError(
+            "Shape bounding box has area 0. Check if shape coordinates are valid."
+        )
+    if shape_area > 1e7:
+        raise ValueError(
+            "Shape bounding box has area > 1e7. Check if shape coordinates are valid."
+        )
+
+    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
+    scale = 10
+
+    # Clip to shape and reproject
+    image = ee.Image.constant(1)
+    image = image.clip(multipolygon).mask()
+    image = image.reproject(scale=scale, crs=out_crs)
+
+    # Save shape
+    print("Computing mask...")
+    _save_image(image, y_path)
+
+    return y_path
 
 
 @typechecked
@@ -430,11 +503,7 @@ def compute_label(
 
     # Get CRS in epsg format for center of the roi
     longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
-    zone_number = utm.latlon_to_zone_number(latitude, longitude)
-    is_south = utm.latitude_to_zone_letter(latitude) < "N"
-
-    crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
-    crs = f"EPSG:{crs.to_epsg()}"
+    crs = _sentinel_crs(latitude, longitude)
 
     # Convert ROI to bounds in output crs
     roi = roi.bounds(0.01, crs)
@@ -491,7 +560,7 @@ def compute_label(
 def sentinel_composite(
     y_path_from: str,
     X_path_to: str,
-    time_window: Tuple[datetime.date, datetime.date] | Tuple[str, str],
+    time_window: Tuple[datetime.date, datetime.date],
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
     indices: List[str] | None = None,
@@ -511,7 +580,7 @@ def sentinel_composite(
         X_path_to:
             A string representing the output file path to save the composite raster.
         time_window:
-            A tuple of two dates or strings representing the start and end of the time window to retrieve the satellite images.
+            A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved.
         num_composites:
             An integer representing the number of composites to create. Defaults to 1.
         temporal_reducers:
@@ -535,18 +604,9 @@ def sentinel_composite(
     print("Preparing Sentinel-2 data...")
 
     # Ensure proper time window format and convert to strings
-    date_format = "%Y-%m-%d"
-    time_window = tuple(
-        datetime.datetime.strptime(date, date_format)
-        if isinstance(date, str)
-        else date
-        for date in time_window
-    )
-    time_window = tuple(date.strftime(date_format) for date in time_window)
-    start, end = time_window
-    if start > end:
+    if time_window[0] > time_window[1]:
         raise ValueError(
-            f"start ({start}) must be before end ({end}) of timewindow"
+            f"start ({time_window[0]}) must be before end ({time_window[1]}) of timewindow"
         )
 
     # Ensure proper path format
@@ -565,8 +625,13 @@ def sentinel_composite(
                 f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
             )
 
-    # Split time window into sub windows
+    # Split time window into sub windows and convert to strings
     time_windows = _split_time_window(time_window, num_composites)
+    date_format = "%Y-%m-%d"
+    time_windows = [
+        (start.strftime(date_format), end.strftime(date_format))
+        for start, end in time_windows
+    ]
 
     # Use ee.Reducer.mean() if temporal_reducers is None
     if temporal_reducers is None:
@@ -696,7 +761,7 @@ def sentinel_composite(
 def palsar_raster(
     y_path_from: str,
     X_path_to: str,
-    timestamp: datetime.date | str,
+    timestamp: datetime.date,
     sin_cos_angle: bool = True,
     exclude_future: bool = False,
 ) -> str:
@@ -710,7 +775,7 @@ def palsar_raster(
         X_path_to:
             A string representing the output file path to save the raster.
         timestamp:
-            A date or string representing the timestamp of the raster. As the images are sparse, the closest image to the timestamp is used.
+            A date representing the timestamp of the raster. As the images are sparse, the closest image to the timestamp is used.
         sin_cos_angle:
             A boolean indicating whether to include sine and cosine of the angle as bands in the raster instead of the angle. This prevents discontinuity between 359° and 0°. Defaults to True.
         exclude_future:
@@ -726,14 +791,10 @@ def palsar_raster(
     # Ensure proper path format
     _path_check(y_path_from, X_path_to, suffix=".tif")
 
-    # Ensure proper timestamp format and convert to string
-    date_format = "%Y-%m-%d"
-    if not isinstance(timestamp, datetime.date):
-        timestamp = datetime.datetime.strptime(timestamp, date_format)
-    timestamp = timestamp.strftime(date_format)
-
     # Convert timestamp to milliseconds
-    milliseconds = ee.Date(timestamp).millis().getInfo()
+    date_format = "%Y-%m-%d"
+    date = timestamp.strftime(date_format)
+    milliseconds = ee.Date(date).millis().getInfo()
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(y_path_from)
