@@ -58,7 +58,7 @@ from sklearn.model_selection import (
 )
 from typeguard import typechecked
 
-from ltm.data import BROADLEAF_AREA, CONIFER_AREA, LEAF_TYPE_MIXTURE
+from ltm.data import BROADLEAF_AREA, CONIFER_AREA, CONIFER_PROPORTION
 from ltm.features import drop_nan_rows, load_raster, np2pd_like
 
 
@@ -404,7 +404,7 @@ def cv_predict(
     # Check if y has only one band and area2mixture is True -> raise error
     if area2mixture:
         if shape[0] > 1:
-            bands = tuple([LEAF_TYPE_MIXTURE])
+            bands = tuple([CONIFER_PROPORTION])
         else:
             print(
                 "'area2mixture=True' is ignored: y has only one band, so computing the mixture from area is not possible."

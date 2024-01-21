@@ -47,11 +47,14 @@ import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
 from shapely import MultiPolygon, to_geojson
+from tqdm import tqdm
 from typeguard import typechecked
 
 BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
-LEAF_TYPE_MIXTURE = "Leaf Type Mixture"
+CONIFER_PROPORTION = "Conifer Proportion"
+
+reducers = None
 
 
 @typechecked
@@ -170,7 +173,7 @@ def _save_image(
         mask_response = _download_image(image.mask())
     except ee.ee_exception.EEException as exc:
         raise ValueError(
-            "FAILED to compute image. Most likely because the timewindow is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog online."
+            "Failed to compute image. Please check the timewindow first. It can cause this error if it is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog online."
         ) from exc
 
     if image_response.status_code == mask_response.status_code == 200:
@@ -221,11 +224,16 @@ def _mask_s2_clouds(
 def _prettify_band_name(
     band_name: str,
 ) -> str:
-    composite_idx, _, *band_label, reducer_label = band_name.split("_")
+    composite_idx, _, band_label, *reducer_label = band_name.split("_")
     composite_idx = int(composite_idx) + 1
-    pretty_name = (
-        f"{composite_idx} {reducer_label.title()} {'_'.join(band_label)}"
+    reducer_label = " ".join(reducer_label)
+    reducer_label = "".join(
+        [
+            a if a.isupper() else b
+            for a, b in zip(reducer_label, reducer_label.title())
+        ]
     )
+    pretty_name = f"{composite_idx} {reducer_label} {band_label}"
 
     return pretty_name
 
@@ -266,23 +274,79 @@ def _path_check(
 
 
 @typechecked
-def list_reducers() -> List[str]:
+def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
     """Lists all valid reducers in the Earth Engine API.
+
+    Args:
+        use_buffered_reducers:
+            A boolean indicating whether to use the buffered reducers. If False the Google Earth Engine API is used to retrieve all current reducers. Defaults to True.
 
     Returns:
         A list of strings representing the valid reducers.
     """
+    if use_buffered_reducers:
+        return [
+            "And",
+            "Or",
+            "allNonZero",
+            "anyNonZero",
+            "circularMean",
+            "circularStddev",
+            "circularVariance",
+            "count",
+            "countDistinct",
+            "countDistinctNonNull",
+            "countRuns",
+            "first",
+            "firstNonNull",
+            "kendallsCorrelation",
+            "kurtosis",
+            "last",
+            "lastNonNull",
+            "max",
+            "mean",
+            "median",
+            "min",
+            "minMax",
+            "mode",
+            "product",
+            "sampleStdDev",
+            "sampleVariance",
+            "skew",
+            "stdDev",
+            "sum",
+            "variance",
+        ]
+
+    # Check for cached reducers
+    global reducers
+    if reducers is not None:
+        return reducers
+
     # Initialize Earth Engine API
     _initialize_ee()
+    print("Checking for valid reducers...")
 
     # Get all valid reducers
+    ic = ee.ImageCollection([ee.Image.constant(1).toDouble()])
+    point = ee.Geometry.Point(0, 0)
     valid_reducers = []
-    for attr in dir(ee.Reducer):
+    for attr in tqdm(dir(ee.Reducer)):
         try:
-            if isinstance(getattr(ee.Reducer, attr)(), ee.Reducer):
+            reducer = getattr(ee.Reducer, attr)()
+            if isinstance(reducer, ee.Reducer):
+                image = ic.reduce(reducer)
+                result = image.reduceRegion(ee.Reducer.first(), geometry=point)
+                for value in result.getInfo().values():
+                    if value is not None:
+                        float(value)
+
                 valid_reducers.append(attr)
         except (TypeError, ee.ee_exception.EEException):
             continue
+
+    # Cache reducers
+    reducers = valid_reducers
 
     return valid_reducers
 
@@ -512,14 +576,14 @@ def compute_label(
 
     Args:
         y_path:
-            A string representing the file path to save the raster with values between 0 and 1 for the leaf type mixture.
+            A string representing the file path to save the raster with values between 0 and 1 for the conifer proportion.
         plot:
             A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
         area_as_y:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
 
     Returns:
-        A string representing the file path to the raster with values between 0 and 1 for the leaf type mixture. 1 being broadleaf and 0 being conifer.
+        A string representing the file path to the raster with values between 0 and 1 for the conifer proportion. 1 being fully conifer and 0 being fully broadleaf for a given raster cell.
     """
     # Initialize Earth Engine API
     _initialize_ee()
@@ -602,16 +666,16 @@ def compute_label(
     broadleaf_area = _compute_area(broadleafs, scale, fine_scale, crs)
     conifer_area = _compute_area(conifers, scale, fine_scale, crs)
 
-    # Compute y (leaf type mixture) from broadleaf_area and conifer_area
+    # Compute y (conifer proportion) from broadleaf_area and conifer_area
     total_area = broadleaf_area.add(conifer_area)
     if area_as_y:
         y = broadleaf_area.addBands(conifer_area)
         y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
         y = y.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
-        y = broadleaf_area.divide(total_area)
+        y = conifer_area.divide(total_area)
         y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
-        y = y.rename(LEAF_TYPE_MIXTURE)
+        y = y.rename(CONIFER_PROPORTION)
 
     # Clip to roi and reproject
     y = y.clip(roi)
@@ -724,6 +788,11 @@ def sentinel_composite(
     if any(illegal_bands):
         raise ValueError(f"{illegal_bands} not available in: {valid_bands}")
 
+    # Combine sentinel_bands and indices
+    bands = sentinel_bands.copy()
+    if indices is not None:
+        bands += indices
+
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(y_path_from)
 
@@ -749,13 +818,33 @@ def sentinel_composite(
             s2_window = s2_window.spectralIndices(indices)
 
         # Select bands
-        s2_window = s2_window.select(sentinel_bands)
+        s2_window = s2_window.select(bands)
 
         # Reduce by temporal_reducers
-        reduced_images = [
-            s2_window.reduce(getattr(ee.Reducer, temporal_reducer)())
-            for temporal_reducer in temporal_reducers
-        ]
+        reduced_images = []
+        for temporal_reducer in temporal_reducers:
+            reducer = getattr(ee.Reducer, temporal_reducer)()
+            reduced_image = s2_window.reduce(reducer)
+
+            band_names = reduced_image.bandNames().getInfo()
+            if len(band_names) == len(bands):
+                band_names = [
+                    f"{band_name.split('_')[0]}_{temporal_reducer}"
+                    for band_name in reduced_image.bandNames().getInfo()
+                ]
+            else:
+                # Rename bands and remove temporal_reducer from band name
+                new_band_names = []
+                for band_name in band_names:
+                    band, *reducer_label = band_name.split("_")
+                    reducer_label = "_".join(reducer_label)
+                    new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
+                    new_band_names.append(new_band_name)
+                band_names = new_band_names
+
+            reduced_image = reduced_image.rename(band_names)
+
+            reduced_images.append(reduced_image)
 
         # Combine reduced_images into one image
         datum = ee.ImageCollection(reduced_images).toBands()
