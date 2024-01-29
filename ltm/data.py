@@ -405,7 +405,7 @@ def combine_band_name(
         composite_idx:
             An integer for the composite index starting at 1.
         reducer:
-            A string for the reducer.
+            A string for the reducer, possibly containing space characters.
         band_label:
             A string for the band label.
 
@@ -425,11 +425,11 @@ def split_band_name(
         A string for the band name.
 
     Returns:
-        A tuple of the composite index starting at 1, reducer, and band label.
+        A tuple of the composite index starting at 1, reducer (possibly containing space characters), and band label.
     """
-    composite_idx, reducer, band_label = band_name.split(maxsplit=2)
+    composite_idx, *reducer, band_label = band_name.split()
 
-    return int(composite_idx), reducer, band_label
+    return int(composite_idx), " ".join(reducer), band_label
 
 
 @typechecked

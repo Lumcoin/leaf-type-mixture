@@ -249,8 +249,8 @@ def drop_nan_rows(
 
     # Raise an error if all rows are dropped
     if not mask.any():
-        raise ValueError(
-            "All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?"
+        print(
+            "Warning: All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?"
         )
 
     # Prepare result
