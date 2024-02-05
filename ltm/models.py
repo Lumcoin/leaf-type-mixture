@@ -39,6 +39,7 @@ Typical usage example: TODO
         random_state=42,
     )
 """
+
 import io
 from collections import defaultdict
 from pathlib import Path
@@ -183,6 +184,67 @@ def _y2raster(
         raster = np.expand_dims(raster, axis=0)
 
     return raster
+
+
+@typechecked
+def plot_report(
+    df: pd.DataFrame,
+    title: str | None = None,
+    xlabel: str | None = None,
+    ylabel: str | None = None,
+    label_rotation: int = 0,
+    replace_labels: dict | None = None,
+    **kwargs: Any,
+) -> plt.Axes:
+    """Plots a DataFrame with a title, x and y label and legend.
+
+    The index of the DataFrame is used for the x-axis and the columns for the lines in the plot. The legend is placed to the right of the plot.
+
+    Args:
+        df:
+            DataFrame to plot.
+        title:
+            Title of the plot. Defaults to None.
+        xlabel:
+            Label for the x-axis. Defaults to None.
+        ylabel:
+            Label for the y-axis. Defaults to None.
+        label_rotation:
+            Rotation of the x-axis labels. Defaults to 0.
+        replace_labels:
+            Dictionary to replace labels in the legend. Works also for replacing a subset of the labels. Defaults to None.
+        **kwargs:
+            Additional keyword arguments to pass to df.plot(), e.g. figsize=(10, 5) or marker="o".
+
+    Returns:
+        Axes of the plot.
+    """
+    # Create empty dictionary if replace is None
+    if replace_labels is None:
+        replace_labels = {}
+
+    # Plot
+    ax = df.plot(**kwargs)
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    # Set xticks
+    ax.set_xticks(range(len(df)))
+    ax.set_xticklabels(df.index, rotation=label_rotation)
+    ax.xaxis.set_tick_params(which="minor", bottom=False, top=False)
+
+    # Replace labels
+    labels = ax.get_legend_handles_labels()[1]
+    for i, label in enumerate(labels):
+        if label in replace_labels.keys():
+            labels[i] = replace_labels[label]
+
+    # Set legend
+    golden_ratio = (1 + 5**0.5) / 2
+    ax.legend(labels, loc="center left", bbox_to_anchor=(1, 1 / golden_ratio))
+
+    return ax
 
 
 @typechecked

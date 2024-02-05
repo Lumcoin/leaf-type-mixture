@@ -54,7 +54,9 @@ BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
 CONIFER_PROPORTION = "Conifer Proportion"
 
-reducers = None
+level_2a_bands = None
+level_1c_bands = None
+index_bands = None
 
 
 @typechecked
@@ -130,6 +132,42 @@ def _get_roi_scale_crs(
 
 
 @typechecked
+def _split_reducer_band_name(
+    band_name: str,
+    reverse_and_space: bool = False,
+) -> Tuple[str, str]:
+    valid_bands = set(list_bands(level_2a=True))
+    valid_bands = valid_bands.union(set(list_bands(level_2a=False)))
+    valid_bands = valid_bands.union(set(list_indices()))
+
+    if reverse_and_space:
+        parts = band_name.split(" ")
+        partial_band = parts[-1]
+        band = partial_band if partial_band in valid_bands else ""
+        for part in parts[-2::-1]:
+            partial_band = f"{part}_{partial_band}"
+            if partial_band in valid_bands:
+                band = partial_band
+
+        band = band.replace("_", " ")
+        reducer = band_name[: -len(band) - 1]
+
+        return band, reducer
+
+    parts = band_name.split("_")
+    partial_band = parts[0]
+    band = partial_band if partial_band in valid_bands else ""
+    for part in parts[1:]:
+        partial_band += f"_{part}"
+        if partial_band in valid_bands:
+            band = partial_band
+
+    reducer = band_name[len(band) + 1 :]
+
+    return band, reducer
+
+
+@typechecked
 def _download_image(
     image: ee.Image,
 ) -> requests.Response:
@@ -173,7 +211,7 @@ def _save_image(
         mask_response = _download_image(image.mask())
     except ee.ee_exception.EEException as exc:
         raise ValueError(
-            "Failed to compute image. Please check the timewindow first. It can cause this error if it is too small or outside the availability, see 'Dataset Availability' in the Earth Engine Data Catalog online."
+            "Failed to compute image. Please check the timewindow first, maybe it is too small. This error can occur if there is no data for the given timewindow."
         ) from exc
 
     if image_response.status_code == mask_response.status_code == 200:
@@ -186,7 +224,7 @@ def _save_image(
         print(f"GeoTIFF saved as {file_path}")
     else:
         print(
-            f"FAILED to either compute or download the image for {file_path} most likely due to limits of Google Earth Engine."
+            f"FAILED to either compute or download the image for {file_path} most likely due to computational limits of Google Earth Engine."
         )
 
 
@@ -221,12 +259,12 @@ def _mask_s2_clouds(
 
 
 @typechecked
-def _prettify_band_name(
-    band_name: str,
-) -> str:
-    composite_idx, _, band_label, *reducer_label = band_name.split("_")
+def _prettify_band_name(band_name: str) -> str:
+    composite_idx, _, band_reducer = band_name.split("_", 2)
+    band_label, reducer_label = _split_reducer_band_name(band_reducer)
+    band_label = band_label.replace("_", " ")
+    reducer_label = reducer_label.replace("_", " ")
     composite_idx = int(composite_idx) + 1
-    reducer_label = " ".join(reducer_label)
     reducer_label = "".join(
         [
             a if a.isupper() else b
@@ -365,12 +403,25 @@ def list_bands(level_2a: bool = True) -> List[str]:
     # Initialize Earth Engine API
     _initialize_ee()
 
+    # Check for cached bands
+    global level_2a_bands, level_1c_bands
+    if level_2a and level_2a_bands is not None:
+        return level_2a_bands
+    if not level_2a and level_1c_bands is not None:
+        return level_1c_bands
+
     # Get all valid bands
     if level_2a:
         s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
     else:
         s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
     bands = s2.first().bandNames().getInfo()
+
+    # Cache bands
+    if level_2a:
+        level_2a_bands = bands
+    else:
+        level_1c_bands = bands
 
     return bands
 
@@ -382,6 +433,14 @@ def list_indices() -> List[str]:
     Returns:
         A list of strings representing the valid indices.
     """
+    # Initialize Earth Engine API
+    _initialize_ee()
+
+    # Check for cached indices
+    global index_bands
+    if index_bands is not None:
+        return index_bands
+
     # Get all valid indices
     indices = eemont.common.indices()
     s2_indices = [
@@ -389,6 +448,12 @@ def list_indices() -> List[str]:
         for index in indices
         if "Sentinel-2" in eemont.common.indices()[index]["platforms"]
     ]
+
+    # Remove NIRvP (does need bands not available in Sentinel-2)
+    s2_indices.remove("NIRvP")
+
+    # Cache indices
+    index_bands = s2_indices
 
     return s2_indices
 
@@ -412,7 +477,7 @@ def combine_band_name(
     Returns:
         A string for the band name.
     """
-    return f"{composite_idx} {reducer.title()} {band_label}"
+    return f"{composite_idx} {reducer} {band_label}"
 
 
 @typechecked
@@ -427,9 +492,13 @@ def split_band_name(
     Returns:
         A tuple of the composite index starting at 1, reducer (possibly containing space characters), and band label.
     """
-    composite_idx, *reducer, band_label = band_name.split()
+    composite_idx, band_name = band_name.split(maxsplit=1)
 
-    return int(composite_idx), " ".join(reducer), band_label
+    band_label, reducer = _split_reducer_band_name(
+        band_name, reverse_and_space=True
+    )
+
+    return int(composite_idx), reducer, band_label
 
 
 @typechecked
@@ -442,6 +511,7 @@ def show_timeseries(
     with rasterio.open(raster_path) as src:
         raster = src.read()
         bands = src.descriptions
+        bands_lower = [band.lower() for band in bands]
 
     # Check if rgb_bands has length of three or is None
     if rgb_bands is not None and len(rgb_bands) != 3:
@@ -461,14 +531,14 @@ def show_timeseries(
                 _, _, rgb_bands[i] = split_band_name(rgb_bands[i])
 
     # Get the rasters for the rgb bands
-    num_composites, _, _ = split_band_name(bands[-1])
+    num_composites, reducer_title, _ = split_band_name(bands[-1])
     rgb_rasters = []
     for i in range(1, num_composites + 1):
         rgb_raster = []
         for b in rgb_bands:
             if b is not None:
-                raster_band = combine_band_name(i, reducer, b)
-                band_raster = raster[bands.index(raster_band)]
+                raster_band = combine_band_name(i, reducer, b).lower()
+                band_raster = raster[bands_lower.index(raster_band)]
             else:
                 band_raster = np.zeros_like(raster[0])
 
@@ -494,7 +564,7 @@ def show_timeseries(
         rgb_raster **= 1 / 2.2
         rgb_raster[np.isnan(rgb_raster)] = 0
         ax.imshow(rgb_raster)
-        ax.set_title(f"{i} {reducer}")
+        ax.set_title(f"{i} {reducer_title}")
         ax.axis("off")
 
     # Show the plot
@@ -703,7 +773,7 @@ def sentinel_composite(
     """Creates a composite from many Sentinel 2 satellite images for a given
     label image.
 
-    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest.
+    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
 
     Args:
         y_path_from:
@@ -711,7 +781,7 @@ def sentinel_composite(
         X_path_to:
             A string representing the output file path to save the composite raster.
         time_window:
-            A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved.
+            A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved. The dates are converted to milliseconds. The end date is technically exclusive, but only by one millisecond.
         num_composites:
             An integer representing the number of composites to create. Defaults to 1.
         temporal_reducers:
@@ -732,11 +802,21 @@ def sentinel_composite(
     _initialize_ee()
     print("Preparing Sentinel-2 data...")
 
-    # Ensure proper time window format and convert to strings
-    if time_window[0] > time_window[1]:
+    # Ensure proper time windows
+    if round(time_window[0].timestamp() * 1000) >= round(
+        time_window[1].timestamp() * 1000
+    ):
         raise ValueError(
-            f"start ({time_window[0]}) must be before end ({time_window[1]}) of timewindow"
+            f"start ({time_window[0]}) must be before the end ({time_window[1]}) of timewindow"
         )
+    if level_2a and time_window[0] < datetime.datetime(2017, 3, 28):
+        if time_window[0] >= datetime.datetime(2015, 6, 27):
+            raise ValueError(
+                "Level-2A data is not available before 2017-03-28. Use Level-1C data instead."
+            )
+        raise ValueError("Level-2A data is not available before 2017-03-28.")
+    if not level_2a and time_window[0] < datetime.datetime(2015, 6, 27):
+        raise ValueError("Level-1C data is not available before 2015-06-27.")
 
     # Ensure proper path format
     _path_check(y_path_from, X_path_to, suffix=".tif")
@@ -754,9 +834,8 @@ def sentinel_composite(
 
     # Split time window into sub windows and convert to strings
     time_windows = _split_time_window(time_window, num_composites)
-    date_format = "%Y-%m-%d"
     time_windows = [
-        (start.strftime(date_format), end.strftime(date_format))
+        (round(start.timestamp() * 1000), round(end.timestamp() * 1000))
         for start, end in time_windows
     ]
 
@@ -792,6 +871,12 @@ def sentinel_composite(
     bands = sentinel_bands.copy()
     if indices is not None:
         bands += indices
+
+    # Check if the limit of 5000 bands is exceeded
+    if len(bands) * len(temporal_reducers) > 5000:
+        raise ValueError(
+            f"You exceed the 5000 bands max limit of GEE: {len(bands) * len(temporal_reducers)} bands"
+        )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(y_path_from)
@@ -829,15 +914,14 @@ def sentinel_composite(
             band_names = reduced_image.bandNames().getInfo()
             if len(band_names) == len(bands):
                 band_names = [
-                    f"{band_name.split('_')[0]}_{temporal_reducer}"
+                    f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
                     for band_name in reduced_image.bandNames().getInfo()
                 ]
             else:
                 # Rename bands and remove temporal_reducer from band name
                 new_band_names = []
                 for band_name in band_names:
-                    band, *reducer_label = band_name.split("_")
-                    reducer_label = "_".join(reducer_label)
+                    band, reducer_label = _split_reducer_band_name(band_name)
                     new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
                     new_band_names.append(new_band_name)
                 band_names = new_band_names
