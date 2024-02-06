@@ -59,7 +59,13 @@ from sklearn.model_selection import (
 )
 from typeguard import typechecked
 
-from ltm.data import BROADLEAF_AREA, CONIFER_AREA, CONIFER_PROPORTION
+from ltm.data import (
+    BROADLEAF_AREA,
+    CONIFER_AREA,
+    CONIFER_PROPORTION,
+    list_bands,
+    list_indices,
+)
 from ltm.features import drop_nan_rows, load_raster, np2pd_like
 
 
@@ -194,6 +200,7 @@ def plot_report(
     ylabel: str | None = None,
     label_rotation: int = 0,
     replace_labels: dict | None = None,
+    categorical_x: bool = True,
     **kwargs: Any,
 ) -> plt.Axes:
     """Plots a DataFrame with a title, x and y label and legend.
@@ -213,6 +220,8 @@ def plot_report(
             Rotation of the x-axis labels. Defaults to 0.
         replace_labels:
             Dictionary to replace labels in the legend. Works also for replacing a subset of the labels. Defaults to None.
+        categorical_x:
+            Whether the x-axis is categorial and thus each index is an xtick. Not recommended for very long DataFrames. Defaults to True.
         **kwargs:
             Additional keyword arguments to pass to df.plot(), e.g. figsize=(10, 5) or marker="o".
 
@@ -230,9 +239,10 @@ def plot_report(
     ax.set_ylabel(ylabel)
 
     # Set xticks
-    ax.set_xticks(range(len(df)))
-    ax.set_xticklabels(df.index, rotation=label_rotation)
-    ax.xaxis.set_tick_params(which="minor", bottom=False, top=False)
+    if categorical_x:
+        ax.set_xticks(range(len(df)))
+        ax.set_xticklabels(df.index, rotation=label_rotation)
+        ax.xaxis.set_tick_params(which="minor", bottom=False, top=False)
 
     # Replace labels
     labels = ax.get_legend_handles_labels()[1]
@@ -245,6 +255,58 @@ def plot_report(
     ax.legend(labels, loc="center left", bbox_to_anchor=(1, 1 / golden_ratio))
 
     return ax
+
+
+@typechecked
+def bands_from_importance(
+    band_importance_path: str,
+    level_2a: bool = True,
+) -> Tuple[List[str], List[str]]:
+    """Extracts the band names of sentinel bands and indices from the band importance file.
+
+    The last band with an optimum in one of the scores is interpreted as the last band to be kept. All bands after this band are removed. The bands are then divided into sentinel bands and indices.
+
+    Args:
+        band_importance_path:
+            Path to the file with band names and their scores.
+        level_2a:
+            Whether the band importance file is from a level 2A dataset. Defaults to True.
+
+    Returns:
+        Tuple of lists of sentinel band names and index names.
+    """
+    # Check path
+    if not Path(band_importance_path).exists():
+        raise ValueError(f"File does not exist: {band_importance_path}")
+
+    # Read band importance file
+    df = pd.read_csv(band_importance_path, index_col=0)
+    band_names = df.index
+    df = df.reset_index()
+
+    # Find last band with an optimum in one of the scores
+    best_r2_idx = df["R2 Score"].idxmax()
+    best_mae_idx = df["Mean Absolute Error"].idxmin()
+    best_rmse_idx = df["Root Mean Squared Error"].idxmin()
+    best_idx = max(best_r2_idx, best_mae_idx, best_rmse_idx)
+
+    # Divide bands into sentinel bands and indices
+    best_bands = list(band_names[: best_idx + 1])
+    best_bands = [band.replace(" ", "_") for band in best_bands]
+    valid_sentinel_bands = list_bands(level_2a)
+    valid_index_bands = list_indices()
+    sentinel_bands = [
+        band for band in valid_sentinel_bands if band in best_bands
+    ]
+    index_bands = [band for band in valid_index_bands if band in best_bands]
+
+    # Sanity check
+    if len(sentinel_bands) + len(index_bands) != len(best_bands):
+        raise ValueError(
+            "The sum of sentinel bands and index bands does not equal the number of best bands. This should not happen..."
+        )
+
+    return sentinel_bands, index_bands
 
 
 @typechecked

@@ -1,7 +1,7 @@
 Leaf Type Mixture
 ==============================
 
-> **Disclaimer:** This repository is still under development. The code is not yet ready for production use.
+> **Disclaimer:** This repository is still under development. The code is not yet ready for production use. The README is only a placeholder and will be updated in the future.
 
 This repository belongs to the paper ---. Thus most functions in this repository are tailored to the use case of leaf type mixture prediction. However some functions might be useful for general use cases. For example you can create a Sentinel 2 composite for a given label raster in GeoTIFF format. There are functions for reading raster data as pd.DataFrames, etc. General use cases are demonstrated in general_use_cases.ipynb.
 
