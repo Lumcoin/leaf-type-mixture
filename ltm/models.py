@@ -284,11 +284,11 @@ def bands_from_importance(
     band_names = df.index
     df = df.reset_index()
 
-    # Find last band with an optimum in one of the scores
+    # Find first band with an optimum in one of the scores
     best_r2_idx = df["R2 Score"].idxmax()
     best_mae_idx = df["Mean Absolute Error"].idxmin()
     best_rmse_idx = df["Root Mean Squared Error"].idxmin()
-    best_idx = max(best_r2_idx, best_mae_idx, best_rmse_idx)
+    best_idx = min(best_r2_idx, best_mae_idx, best_rmse_idx)
 
     # Divide bands into sentinel bands and indices
     best_bands = list(band_names[: best_idx + 1])

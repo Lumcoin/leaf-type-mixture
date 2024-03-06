@@ -23,6 +23,7 @@ Typical usage example:
 
     X, y = drop_nan_rows(X, y)
 """
+
 import os
 from collections import defaultdict
 from typing import List, Tuple
@@ -195,11 +196,14 @@ def save_raster(
 
     # Read raster profile and shape
     with rasterio.open(source_path) as raster:
-        profile = raster.profile
+        profile = dict(raster.profile)
+        profile["count"] = len(X.columns)
         shape = raster.read().shape
 
     # Reshape X
-    X_values = X_values.reshape(shape[1], shape[2], shape[0]).transpose(2, 0, 1)
+    X_values = X_values.reshape(shape[1], shape[2], len(X.columns)).transpose(
+        2, 0, 1
+    )
 
     # Write raster
     with rasterio.open(destination_path, "w", **profile) as dst:
@@ -257,15 +261,37 @@ def drop_nan_rows(
     result = tuple(datum[mask] for datum in data)
     if reset_index:
         result = tuple(
-            datum
-            if isinstance(datum, np.ndarray)
-            else datum.reset_index(drop=True)
+            (
+                datum
+                if isinstance(datum, np.ndarray)
+                else datum.reset_index(drop=True)
+            )
             for datum in result
         )
     if len(data) == 1:
         result = result[0]
 
     return result
+
+
+@typechecked
+def to_float32(X: pd.DataFrame) -> pd.DataFrame:
+    """Converts the data to float32 and replaces infinities with the maximum and minimum float32 values.
+
+    Args:
+        X:
+            A DataFrame containing the data.
+
+    Returns:
+        A DataFrame containing the data as float32."""
+    float32_max = np.finfo(np.float32).max
+    float32_min = np.finfo(np.float32).min
+
+    X[X > float32_max] = float32_max
+    X[X < float32_min] = float32_min
+    X = X.astype(np.float32)
+
+    return X
 
 
 @typechecked

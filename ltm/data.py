@@ -33,6 +33,7 @@ import json
 import math
 from itertools import product
 from pathlib import Path
+from time import sleep
 from typing import List, Set, Tuple
 
 import ee
@@ -54,6 +55,7 @@ BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
 CONIFER_PROPORTION = "Conifer Proportion"
 
+reducers = None
 level_2a_bands = None
 level_1c_bands = None
 index_bands = None
