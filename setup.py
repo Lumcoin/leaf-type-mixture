@@ -10,6 +10,7 @@ setup(
     author="Peter Hofinger",
     license="MIT",
     install_requires=[
+        "bayesian-optimization",
         "ee",
         "eemont",
         "geopandas",

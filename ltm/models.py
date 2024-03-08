@@ -47,6 +47,7 @@ from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing
 import pandas as pd
 import rasterio
 from sklearn.base import BaseEstimator
@@ -105,8 +106,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def split(
         self,
-        X: np.ndarray,
-        y: np.ndarray,
+        X: np.typing.ArrayLike,
+        y: np.typing.ArrayLike,
         groups: np.ndarray | None = None,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generates indices to split data into training and test set.
@@ -122,6 +123,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
         Yields:
             Tuple of indices for training and test set.
         """
+        X = np.array(X)
+        y = np.array(y)
         for train, test in self.k_fold.split(X, y):
             indices = np.where((y[train] == 0) | (y[train] == 1))[0]
 
@@ -136,8 +139,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def get_n_splits(
         self,
-        X: np.ndarray | None = None,
-        y: np.ndarray | None = None,
+        X: np.typing.ArrayLike | None = None,
+        y: np.typing.ArrayLike | None = None,
         groups: np.ndarray | None = None,
     ) -> int:
         """Returns the number of splitting iterations in the cross-validator.
@@ -414,8 +417,15 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     score_func = scorer._score_func
 
     def mixture_score_func(
-        y_true: np.ndarray, y_pred: np.ndarray, *args, **kwargs
+        y_true: np.typing.ArrayLike,
+        y_pred: np.typing.ArrayLike,
+        *args,
+        **kwargs,
     ) -> Callable:
+        # Convert to np.ndarray
+        y_true = np.array(y_true)
+        y_pred = np.array(y_pred)
+
         # broadleaf is 0, conifer is 1
         y_true = y_true[:, 0] / (y_true[:, 0] + y_true[:, 1])
         y_pred = y_pred[:, 0] / (y_pred[:, 0] + y_pred[:, 1])
