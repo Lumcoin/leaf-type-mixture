@@ -45,19 +45,25 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Tuple
 
+import dill
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing
+import optuna
 import pandas as pd
 import rasterio
 from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
 from sklearn.metrics._scorer import _BaseScorer, _PredictScorer
 from sklearn.model_selection import (
     BaseCrossValidator,
     KFold,
     RandomizedSearchCV,
     cross_val_predict,
+    cross_validate,
 )
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 from typeguard import typechecked
 
 from ltm.data import (
@@ -478,6 +484,143 @@ def best_scores(
     df = pd.DataFrame(df_dict, index=model_names)
 
     return df
+
+
+@typechecked
+def hyperparam_search(
+    model: BaseEstimator,
+    search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
+    X: np.typing.ArrayLike,
+    y: np.typing.ArrayLike,
+    scorer: _BaseScorer,
+    cv: int = 5,
+    n_trials: int = 100,
+    n_jobs: int = 1,
+    random_state: int | None = None,
+    save_folder: str | None = None,
+) -> Tuple[Pipeline, optuna.study.Study]:
+    """Performs hyperparameter search for a model using optuna.
+
+    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best model will be returned along with the optuna study.
+
+    Args:
+        model:
+            Model to perform hyperparameter search for.
+        search_space:
+            List of tuples with the name of the method to suggest, the arguments and the keyword arguments. For example [("suggest_float", ("alpha", 1e-10, 1e-1), {"log": True})].
+        X:
+            Features to use for hyperparameter search.
+        y:
+            Labels to use for hyperparameter search.
+        scorer:
+            Scorer to use for hyperparameter search. Please make sure to set greater_is_better=False when using make_scorer if you want to minimize a metric.
+        cv:
+            Number of folds to use for cross validation. Defaults to 5.
+        n_trials:
+            Number of trials to perform for hyperparameter search. Defaults to 100.
+        n_jobs:
+            Number of jobs to use for hyperparameter search. Set it to -1 to maximize parallelization.  Defaults to 1, as otherwise optuna becomes non-deterministic.
+        random_state:
+            Integer to be used as random state for reproducible results. Defaults to None.
+        save_folder:
+            Folder to save the study SQLite database and model PKL to. Uses model.__class__.__name__ to name the files. Skips search if files already exist. Defaults to None.
+    """
+    # Check for valid save_path
+    if save_folder is not None:
+        save_path_obj = Path(save_folder)
+        if not save_path_obj.parent.exists():
+            raise ValueError(
+                f"Directory of save_path does not exist: {save_path_obj.parent}"
+            )
+
+        # Check if files already exist
+        model_name = model.__class__.__name__
+        study_path = save_path_obj / f"{model_name}_study.pkl"
+        model_path = save_path_obj / f"{model_name}.pkl"
+        if study_path.exists() and model_path.exists():
+            print(
+                f"Files already exist, skipping search: {study_path}, {model_path}"
+            )
+            with open(model_path, "rb") as file:
+                best_model = dill.load(file)
+            with open(study_path, "rb") as file:
+                study = dill.load(file)
+
+            return best_model, study
+        if study_path.exists() or model_path.exists():
+            raise ValueError(
+                f"Only one file exists, please delete it manually: {study_path}, {model_path}"
+            )
+
+    def objective(trial):
+        # Choose whether to standardize and apply PCA
+        do_standardize = trial.suggest_categorical(
+            "do_standardize", [True, False]
+        )
+        do_pca = trial.suggest_categorical("do_pca", [True, False])
+
+        # Define pipeline steps
+        steps = []
+        if do_standardize:
+            steps.append(("scaler", StandardScaler()))
+        if do_pca:
+            max_components = min(X.shape) - np.ceil(min(X.shape) / cv).astype(
+                int
+            )
+            n_components = trial.suggest_int("n_components", 1, max_components)
+            steps.append(("pca", PCA(n_components=n_components)))
+
+        # Define model step
+        nonlocal model
+        params = {
+            args[0]: getattr(trial, name)(*args, **kwargs)
+            for name, args, kwargs in search_space
+        }
+        model = model.set_params(**params)
+        steps.append(("model", model))
+
+        # Cross validate pipeline
+        pipe = Pipeline(steps=steps)
+        cv_results = cross_validate(
+            pipe, X, y, cv=cv, scoring=scorer, n_jobs=-1
+        )
+        score = cv_results["test_score"].mean()
+
+        return score
+
+    # Optimize study with random state
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+    study = optuna.create_study(
+        sampler=sampler, direction="maximize", study_name=model_name
+    )
+    study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs)
+
+    # Save study results and best model using dill
+    if save_folder is not None:
+        # Save study
+        with open(study_path, "wb") as file:
+            dill.dump(study, file)
+
+        # Define pipeline steps for best model
+        steps = []
+        if study.best_params["do_standardize"]:
+            steps.append(("scaler", StandardScaler()))
+        if study.best_params["do_pca"]:
+            steps.append(
+                ("pca", PCA(n_components=study.best_params["n_components"]))
+            )
+        model_params = {
+            args[0]: study.best_params[args[0]] for _, args, _ in search_space
+        }
+        model = model.set_params(**model_params)
+
+        # Create and save best model
+        steps.append(("model", model))
+        best_model = Pipeline(steps=steps)
+        with open(model_path, "wb") as file:
+            dill.dump(best_model, file)
+
+    return best_model, study
 
 
 # TODO: improve formatting of figure
