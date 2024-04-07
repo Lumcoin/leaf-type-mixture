@@ -1,27 +1,27 @@
 """Loads, manipulates, and analyzes multi-band raster data.
 
-The data is loaded as a pandas DataFrame with band names as column names and the flattened data as rows. The data can be manipulated using the functions interpolate_X, drop_nan_rows, and dendrogram_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
+The data is loaded as a pandas DataFrame with band names as column names and the flattened data as rows. The data can be manipulated using the functions interpolate_data, drop_nan_rows, and dendrogram_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
 
 Typical usage example:
 
-    from ltm.features import load_raster, interpolate_X, drop_nan_rows, save_raster, get_similarity_matrix, show_similarity_matrix, show_dendrogram, dendrogram_dim_red
+    from ltm.features import load_raster, interpolate_data, drop_nan_rows, save_raster, get_similarity_matrix, show_similarity_matrix, show_dendrogram, dendrogram_dim_red
 
-    X_path = "X.tif"
-    y_path = "y.tif"
+    data_path = "data.tif"
+    target_path = "target.tif"
 
-    X = load_raster(X_path)
-    y = load_raster(y_path)
+    data = load_raster(data_path)
+    target = load_raster(target_path)
 
-    X = interpolate_X(X)
+    data = interpolate_data(data)
 
-    similarity_matrix = get_similarity_matrix(X)
+    similarity_matrix = get_similarity_matrix(data)
     show_similarity_matrix(similarity_matrix)
     show_dendrogram(similarity_matrix)
-    dendrogram_dim_red(X, similarity_matrix, threshold=0.2)
+    dendrogram_dim_red(data, similarity_matrix, threshold=0.2)
 
-    save_raster(X, X_path, "../data/processed/interpolated_X.tif")
+    save_raster(data, data_path, "../data/processed/interpolated_data.tif")
 
-    X, y = drop_nan_rows(X, y)
+    data, target = drop_nan_rows(data, target)
 """
 
 import os
@@ -119,16 +119,16 @@ def load_raster(
 
 
 @typechecked
-def interpolate_X(
-    X: pd.DataFrame,
+def interpolate_data(
+    data: pd.DataFrame,
     cyclic: bool = True,
     method: str = "linear",
     order: int | None = None,
 ) -> pd.DataFrame:
-    """Interpolate missing time series values in X using the given method.
+    """Interpolate missing time series values in data using the given method.
 
     Args:
-        X:
+        data:
             A pd.DataFrame containing the data as values and band names as column names.
         cyclic:
             A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
@@ -140,8 +140,8 @@ def interpolate_X(
     Returns:
         A tuple of a numpy array containing the interpolated data and a list of strings representing the band names. The band names are unchanged.
     """
-    band_names = list(X.columns)
-    values = X.values
+    band_names = list(data.columns)
+    values = data.values
 
     # Get the number of composites and number of bands
     num_composites = int(band_names[-1].split()[0])
@@ -163,25 +163,27 @@ def interpolate_X(
         df = df.iloc[start:end].reset_index(drop=True)
 
     # Reshape back into original shape
-    interpolated_X = df.values.T.reshape(-1, num_bands, num_composites)
-    interpolated_X = interpolated_X.transpose(0, 2, 1)
-    interpolated_X = interpolated_X.reshape(-1, num_bands * num_composites)
+    interpolated_data = df.values.T.reshape(-1, num_bands, num_composites)
+    interpolated_data = interpolated_data.transpose(0, 2, 1)
+    interpolated_data = interpolated_data.reshape(
+        -1, num_bands * num_composites
+    )
 
-    interpolated_X = pd.DataFrame(interpolated_X, columns=band_names)
+    interpolated_data = pd.DataFrame(interpolated_data, columns=band_names)
 
-    return interpolated_X
+    return interpolated_data
 
 
 @typechecked
 def save_raster(
-    X: pd.DataFrame,
+    data: pd.DataFrame,
     source_path: str,
     destination_path: str,
 ) -> str:
     """Saves the data as a raster image.
 
     Args:
-        X:
+        data:
             A pandas DataFrame containing the data. The column names are used as band names.
         source_path:
             A string of the file path to the source image. Used for copying the raster profile.
@@ -191,24 +193,24 @@ def save_raster(
     Returns:
         A string of the file path to the destination image.
     """
-    # Copy X
-    X_values = X.values.copy()
+    # Copy data
+    data_values = data.values.copy()
 
     # Read raster profile and shape
     with rasterio.open(source_path) as raster:
         profile = dict(raster.profile)
-        profile["count"] = len(X.columns)
+        profile["count"] = len(data.columns)
         shape = raster.read().shape
 
-    # Reshape X
-    X_values = X_values.reshape(shape[1], shape[2], len(X.columns)).transpose(
-        2, 0, 1
-    )
+    # Reshape data
+    data_values = data_values.reshape(
+        shape[1], shape[2], len(data.columns)
+    ).transpose(2, 0, 1)
 
     # Write raster
     with rasterio.open(destination_path, "w", **profile) as dst:
-        dst.write(X_values)
-        dst.descriptions = list(X)
+        dst.write(data_values)
+        dst.descriptions = list(data)
 
     return destination_path
 
@@ -254,7 +256,7 @@ def drop_nan_rows(
     # Raise an error if all rows are dropped
     if not mask.any():
         print(
-            "Warning: All rows contain NaN values. Have you tried interpolating using interpolate_X_and_bands?"
+            "Warning: All rows contain NaN values. Have you tried interpolating using interpolate_data_and_bands?"
         )
 
     # Prepare result
@@ -275,11 +277,11 @@ def drop_nan_rows(
 
 
 @typechecked
-def to_float32(X: pd.DataFrame) -> pd.DataFrame:
+def to_float32(data: pd.DataFrame) -> pd.DataFrame:
     """Converts the data to float32 and replaces infinities with the maximum and minimum float32 values.
 
     Args:
-        X:
+        data:
             A DataFrame containing the data.
 
     Returns:
@@ -287,23 +289,23 @@ def to_float32(X: pd.DataFrame) -> pd.DataFrame:
     float32_max = np.finfo(np.float32).max
     float32_min = np.finfo(np.float32).min
 
-    X[X > float32_max] = float32_max
-    X[X < float32_min] = float32_min
-    X = X.astype(np.float32)
+    data[data > float32_max] = float32_max
+    data[data < float32_min] = float32_min
+    data = data.astype(np.float32)
 
-    return X
+    return data
 
 
 @typechecked
 def get_similarity_matrix(
-    X: pd.DataFrame,
+    data: pd.DataFrame,
     method: str = "pearson",
     seed: int | None = None,
 ) -> pd.DataFrame:
     """Calculates the similarity matrix for the data.
 
     Args:
-        X:
+        data:
             A pandas DataFrame containing the data. The column names are used as band names.
         method:
             A string representing the method to use for calculating the similarity matrix. Must be either 'pearson', 'spearman', or 'mutual_info'. Defaults to 'pearson'.
@@ -314,7 +316,7 @@ def get_similarity_matrix(
         A numpy array containing the similarity matrix. It is symmetrical, has a diagonal of ones and values from 0 to 1.
     """
     # Check if all column names are unique
-    if len(set(X.columns)) != len(X.columns):
+    if len(set(data.columns)) != len(data.columns):
         raise ValueError("All column names must be unique.")
 
     # Check if method is valid
@@ -325,19 +327,19 @@ def get_similarity_matrix(
         )
 
     # Calculate similarity matrix
-    X_values = X.values
+    data_values = data.values
     if method == "pearson":
-        similarity_matrix = np.corrcoef(X_values, rowvar=False)
+        similarity_matrix = np.corrcoef(data_values, rowvar=False)
     elif method == "spearman":
-        similarity_matrix = spearmanr(X_values).correlation
+        similarity_matrix = spearmanr(data_values).correlation
     elif method == "mutual_info":
         # EXPERIMENTAL, most likely scientifically wrong
-        n_neighbors = min(3, X_values.shape[0] - 1)
+        n_neighbors = min(3, data_values.shape[0] - 1)
         similarity_matrix = np.full(
-            (X_values.shape[1], X_values.shape[1]), np.nan
+            (data_values.shape[1], data_values.shape[1]), np.nan
         )
-        for i, band_1 in tqdm(enumerate(X_values.T)):
-            for j, band_2 in enumerate(X_values.T):
+        for i, band_1 in tqdm(enumerate(data_values.T)):
+            for j, band_2 in enumerate(data_values.T):
                 similarity_matrix[i, j] = mutual_info_regression(
                     band_1.reshape(-1, 1),
                     band_2,
@@ -369,7 +371,7 @@ def get_similarity_matrix(
 
     # Convert to pandas DataFrame
     similarity_matrix = pd.DataFrame(
-        similarity_matrix, columns=X.columns, index=X.columns
+        similarity_matrix, columns=data.columns, index=data.columns
     )
 
     return similarity_matrix
@@ -450,7 +452,7 @@ def show_dendrogram(
 
 @typechecked
 def dendrogram_dim_red(
-    X: pd.DataFrame,
+    data: pd.DataFrame,
     similarity_matrix: pd.DataFrame,
     threshold: float,
 ) -> pd.DataFrame:
@@ -459,7 +461,7 @@ def dendrogram_dim_red(
     Implements approach described in https://scikit-learn.org/stable/auto_examples/inspection/plot_permutation_importance_multicollinear.html#handling-multicollinear-features
 
     Args:
-        X:
+        data:
             A pandas DataFrame containing the data. The column names are used as band names.
         similarity_matrix:
             A pandas DataFrame containing the similarity matrix.
@@ -472,10 +474,10 @@ def dendrogram_dim_red(
     # Check if similarity matrix is square
     index = list(similarity_matrix.index)
     columns = list(similarity_matrix.columns)
-    band_names = list(X.columns)
+    band_names = list(data.columns)
     if index != band_names or columns != band_names:
         raise ValueError(
-            "Similarity matrix must be square with column names of X as index and columns."
+            "Similarity matrix must be square with column names of data as index and columns."
         )
 
     # Compute linkage
@@ -492,6 +494,6 @@ def dendrogram_dim_red(
     selected_bands = [v[0] for v in cluster_id_to_band_ids.values()]
     selected_band_names = list(np.array(band_names)[selected_bands])
 
-    selected_X = X[selected_band_names]
+    selected_data = data[selected_band_names]
 
-    return selected_X
+    return selected_data

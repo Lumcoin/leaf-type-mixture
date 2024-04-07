@@ -8,9 +8,9 @@ Typical usage example: TODO
     from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
     from sklearn.metrics import make_scorer, mean_absolute_error, mean_squared_error
 
-    X, band_names = load_multi_band_raster("X.tif")
-    y, _ = load_multi_band_raster("y.tif")
-    X, y = drop_nan_rows(X, y)
+    data, band_names = load_multi_band_raster("data.tif")
+    target, _ = load_multi_band_raster("target.tif")
+    data, target = drop_nan_rows(data, target)
 
     search_space = {
         RandomForestRegressor(): {
@@ -27,14 +27,14 @@ Typical usage example: TODO
     }
 
     # Perform hyperparameter search
-    search_results = hyperparam_search(X, y, search_space, scorers, refit="r2")
+    search_results = hyperparam_search(data, target, search_space, scorers, refit="r2")
 
     score_df = best_scores(search_results, scorers)
 
     cv_predict(
         search_results,
-        X_path,
-        y_path,
+        data_path,
+        target_path,
         rgb_bands=["B4", "B3", "B2"],
         random_state=42,
     )
@@ -112,16 +112,16 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def split(
         self,
-        X: np.typing.ArrayLike,
-        y: np.typing.ArrayLike,
+        data: np.typing.ArrayLike,
+        target: np.typing.ArrayLike,
         groups: np.ndarray | None = None,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generates indices to split data into training and test set.
 
         Args:
-            X:
+            data:
                 Data to split.
-            y:
+            target:
                 Labels to split.
             groups:
                 Group labels to split. Not used.
@@ -129,10 +129,10 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
         Yields:
             Tuple of indices for training and test set.
         """
-        X = np.array(X)
-        y = np.array(y)
-        for train, test in self.k_fold.split(X, y):
-            indices = np.where((y[train] == 0) | (y[train] == 1))[0]
+        data = np.array(data)
+        target = np.array(target)
+        for train, test in self.k_fold.split(data, target):
+            indices = np.where((target[train] == 0) | (target[train] == 1))[0]
 
             end_member_train = train[indices]
 
@@ -145,16 +145,16 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def get_n_splits(
         self,
-        X: np.typing.ArrayLike | None = None,
-        y: np.typing.ArrayLike | None = None,
+        data: np.typing.ArrayLike | None = None,
+        target: np.typing.ArrayLike | None = None,
         groups: np.ndarray | None = None,
     ) -> int:
         """Returns the number of splitting iterations in the cross-validator.
 
         Args:
-            X:
+            data:
                 Data to split. Not used.
-            y:
+            target:
                 Labels to split. Not used.
             groups:
                 Group labels to split. Not used.
@@ -166,31 +166,31 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
 
 @typechecked
-def _y2raster(
-    y: np.ndarray | pd.Series | pd.DataFrame,
+def _target2raster(
+    target: np.ndarray | pd.Series | pd.DataFrame,
     indices: np.ndarray,
     plot_shape: Tuple[int, int, int],
     area2mixture: bool = False,
 ) -> np.ndarray:
-    if isinstance(y, np.ndarray):
-        y_values = y
+    if isinstance(target, np.ndarray):
+        target_values = target
     else:
-        y_values = y.values
+        target_values = target.values
 
-    if len(y_values.shape) == 1:
-        y_values = np.expand_dims(y_values, axis=1)
+    if len(target_values.shape) == 1:
+        target_values = np.expand_dims(target_values, axis=1)
 
-    # Create raster from y with the help of an indices array
+    # Create raster from target with the help of an indices array
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
-    raster[indices] = y_values
+    raster[indices] = target_values
     raster = raster.reshape(
         plot_shape[1], plot_shape[2], plot_shape[0]
     ).transpose(2, 0, 1)
 
     # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
     if area2mixture:
-        columns = list(y.columns)
+        columns = list(target.columns)
         broadleaf_index = columns.index(BROADLEAF_AREA)
         conifer_index = columns.index(CONIFER_AREA)
         broadleaf = raster[broadleaf_index, :, :]
@@ -423,20 +423,24 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     score_func = scorer._score_func
 
     def mixture_score_func(
-        y_true: np.typing.ArrayLike,
-        y_pred: np.typing.ArrayLike,
+        target_true: np.typing.ArrayLike,
+        target_pred: np.typing.ArrayLike,
         *args,
         **kwargs,
     ) -> Callable:
         # Convert to np.ndarray
-        y_true = np.array(y_true)
-        y_pred = np.array(y_pred)
+        target_true = np.array(target_true)
+        target_pred = np.array(target_pred)
 
         # broadleaf is 0, conifer is 1
-        y_true = y_true[:, 0] / (y_true[:, 0] + y_true[:, 1])
-        y_pred = y_pred[:, 0] / (y_pred[:, 0] + y_pred[:, 1])
+        target_true = target_true[:, 0] / (
+            target_true[:, 0] + target_true[:, 1]
+        )
+        target_pred = target_pred[:, 0] / (
+            target_pred[:, 0] + target_pred[:, 1]
+        )
 
-        return score_func(y_true, y_pred, *args, **kwargs)
+        return score_func(target_true, target_pred, *args, **kwargs)
 
     scorer._score_func = mixture_score_func
 
@@ -490,8 +494,8 @@ def best_scores(
 def hyperparam_search(
     model: BaseEstimator,
     search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
-    X: np.typing.ArrayLike,
-    y: np.typing.ArrayLike,
+    data: np.typing.ArrayLike,
+    target: np.typing.ArrayLike,
     scorer: _BaseScorer,
     cv: int = 5,
     n_trials: int = 100,
@@ -508,9 +512,9 @@ def hyperparam_search(
             Model to perform hyperparameter search for.
         search_space:
             List of tuples with the name of the method to suggest, the arguments and the keyword arguments. For example [("suggest_float", ("alpha", 1e-10, 1e-1), {"log": True})].
-        X:
+        data:
             Features to use for hyperparameter search.
-        y:
+        target:
             Labels to use for hyperparameter search.
         scorer:
             Scorer to use for hyperparameter search. Please make sure to set greater_is_better=False when using make_scorer if you want to minimize a metric.
@@ -523,7 +527,7 @@ def hyperparam_search(
         random_state:
             Integer to be used as random state for reproducible results. Defaults to None.
         save_folder:
-            Folder to save the study SQLite database and model PKL to. Uses model.__class__.__name__ to name the files. Skips search if files already exist. Defaults to None.
+            Folder to save the study PKL and model PKL to. Uses model.__class__.__name__ to name the files. Skips search if files already exist. Defaults to None.
     """
     # Check for valid save_path
     if save_folder is not None:
@@ -564,9 +568,9 @@ def hyperparam_search(
         if do_standardize:
             steps.append(("scaler", StandardScaler()))
         if do_pca:
-            max_components = min(X.shape) - np.ceil(min(X.shape) / cv).astype(
-                int
-            )
+            max_components = min(data.shape) - np.ceil(
+                min(data.shape) / cv
+            ).astype(int)
             n_components = trial.suggest_int("n_components", 1, max_components)
             steps.append(("pca", PCA(n_components=n_components)))
 
@@ -582,7 +586,7 @@ def hyperparam_search(
         # Cross validate pipeline
         pipe = Pipeline(steps=steps)
         cv_results = cross_validate(
-            pipe, X, y, cv=cv, scoring=scorer, n_jobs=-1
+            pipe, data, target, cv=cv, scoring=scorer, n_jobs=-1
         )
         score = cv_results["test_score"].mean()
 
@@ -627,8 +631,8 @@ def hyperparam_search(
 @typechecked
 def cv_predict(
     search_results: List[RandomizedSearchCV],
-    X_path: str | List[str],
-    y_path: str | List[str],
+    data_path: str | List[str],
+    target_path: str | List[str],
     rgb_bands: List[str] | None = None,
     cv: int | BaseCrossValidator | None = None,
     area2mixture: bool = False,
@@ -640,10 +644,10 @@ def cv_predict(
     Args:
         search_results:
             List of search results from hyperparameter search.
-        X_path:
-            Single string with path to the X data in GeoTIFF format.
-        y_path:
-            Single string with path to the y data in GeoTIFF format.
+        data_path:
+            Single string with path to the data in GeoTIFF format.
+        target_path:
+            Single string with path to the target data in GeoTIFF format.
         rgb_bands:
             A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
         cv:
@@ -671,43 +675,47 @@ def cv_predict(
             )
 
     # Load data and plot shape
-    X = load_raster(X_path)
-    y = load_raster(y_path)
+    data = load_raster(data_path)
+    target = load_raster(target_path)
 
-    with rasterio.open(y_path) as src:
+    with rasterio.open(target_path) as src:
         bands = src.descriptions
         shape = src.read().shape
 
-    # Check if y has only one band and area2mixture is True -> raise error
+    # Check if target has only one band and area2mixture is True -> raise error
     if area2mixture:
         if shape[0] > 1:
             bands = tuple([CONIFER_PROPORTION])
         else:
             print(
-                "'area2mixture=True' is ignored: y has only one band, so computing the mixture from area is not possible."
+                "'area2mixture=True' is ignored: target has only one band, so computing the mixture from area is not possible."
             )
             area2mixture = False
 
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
-    X, y, indices_array = drop_nan_rows(X, y, indices_array)
+    data, target, indices_array = drop_nan_rows(data, target, indices_array)
 
     # Predict using cross_val_predict
     plots = []
     rgb_plots = []
     for result in search_results:
-        y_pred = cross_val_predict(result.best_estimator_, X, y, cv=cv)
-        y_pred = np2pd_like(y_pred, y)
+        target_pred = cross_val_predict(
+            result.best_estimator_, data, target, cv=cv
+        )
+        target_pred = np2pd_like(target_pred, target)
 
-        plot = _y2raster(
-            y_pred, indices_array, shape, area2mixture=area2mixture
+        plot = _target2raster(
+            target_pred, indices_array, shape, area2mixture=area2mixture
         )
         plots.append(plot)
         rgb_plot = raster2rgb(plot, bands, rgb_bands)
         rgb_plots.append(rgb_plot)
 
     # Create ground truth image
-    gt_plot = _y2raster(y, indices_array, shape, area2mixture=area2mixture)
+    gt_plot = _target2raster(
+        target, indices_array, shape, area2mixture=area2mixture
+    )
     rgb_gt_plot = raster2rgb(gt_plot, bands, rgb_bands)
 
     # Prepare plots for plotting by normalizing and removing nan
@@ -724,7 +732,7 @@ def cv_predict(
         mask = np.logical_or(np.isnan(rgb_plot), rgb_plot < 0)
         rgb_plot[mask] = 0
 
-    # Convert plots to 2D if y has only one band
+    # Convert plots to 2D if target has only one band
     if gt_plot.shape[0] == 1:
         rgb_gt_plot = rgb_gt_plot[:, :, 0]
         rgb_plots = [rgb_plot[:, :, 0] for rgb_plot in rgb_plots]

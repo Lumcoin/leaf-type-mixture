@@ -13,17 +13,17 @@ Typical usage example:
 
     plot = pd.read_csv("plot.csv")
 
-    y_path = "y.tif"
-    X_path = "X.tif"
+    target_path = "target.tif"
+    data_path = "data.tif"
 
     compute_label(
-        y_path=y_path,
+        target_path=target_path,
         plot=plot,
     )
 
     sentinel_composite(
-        y_path_from=y_path,
-        X_path_to=X_path,
+        target_path_from=target_path,
+        data_path_to=data_path,
         time_window=("2020-01-01", "2020-12-31"),
     )
 """
@@ -111,10 +111,10 @@ def _split_time_window(
 
 @typechecked
 def _get_roi_scale_crs(
-    y_path: str,
+    target_path: str,
 ) -> Tuple[ee.Geometry, float, str]:
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
-    with rasterio.open(y_path) as src:
+    with rasterio.open(target_path) as src:
         crs = src.crs.to_string()
         res = src.res
         if res[0] != res[1]:
@@ -577,14 +577,14 @@ def show_timeseries(
 
 @typechecked
 def shape2mask(
-    y_path: str,
+    target_path: str,
     shape: MultiPolygon,
     crs: str,
 ) -> str:
     """Creates a raster mask from a shape.
 
     Args:
-        y_path:
+        target_path:
             A string representing the file path to save the raster mask. Cells inside the shape will be 1 and cells outside the shape will be 0. Border cells are proportional to the area inside the shape between 0 and 1.
         shape:
             A shapely MultiPolygon representing the shape to create the raster mask from.
@@ -599,7 +599,7 @@ def shape2mask(
     print("Preparing mask...")
 
     # Ensure proper path format
-    _path_check(y_path, check_parent=True, check_self=False, suffix=".tif")
+    _path_check(target_path, check_parent=True, check_self=False, suffix=".tif")
 
     # Convert shape to bounds in output crs
     geo_series = gpd.GeoSeries(shape, crs=crs)
@@ -633,26 +633,26 @@ def shape2mask(
 
     # Save shape
     print("Computing mask...")
-    _save_image(image, y_path)
+    _save_image(image, target_path)
 
-    return y_path
+    return target_path
 
 
 @typechecked
 def compute_label(
-    y_path: str,
+    target_path: str,
     plot: pd.DataFrame,
-    area_as_y: bool = False,
+    area_as_target: bool = False,
 ) -> str:
     """Computes the label for a plot.
 
     Args:
-        y_path:
+        target_path:
             A string representing the file path to save the raster with values between 0 and 1 for the conifer proportion.
         plot:
             A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
-        area_as_y:
-            A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a y with two bands, one for each leaf type. Defaults to False.
+        area_as_target:
+            A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a target with two bands, one for each leaf type. Defaults to False.
 
     Returns:
         A string representing the file path to the raster with values between 0 and 1 for the conifer proportion. 1 being fully conifer and 0 being fully broadleaf for a given raster cell.
@@ -676,12 +676,12 @@ def compute_label(
     plot = plot.astype(expected_dtypes)
 
     # Ensure proper path format
-    y_pathlib = Path(y_path)
-    if y_pathlib.suffix != ".tif":
-        raise ValueError("y_path must be a string ending in .tif")
-    if not y_pathlib.parent.exists():
+    target_pathlib = Path(target_path)
+    if target_pathlib.suffix != ".tif":
+        raise ValueError("target_path must be a string ending in .tif")
+    if not target_pathlib.parent.exists():
         raise ValueError(
-            f"y_path parent directory does not exist: {y_pathlib.parent}"
+            f"target_path parent directory does not exist: {target_pathlib.parent}"
         )
 
     # Upload plot
@@ -738,32 +738,36 @@ def compute_label(
     broadleaf_area = _compute_area(broadleafs, scale, fine_scale, crs)
     conifer_area = _compute_area(conifers, scale, fine_scale, crs)
 
-    # Compute y (conifer proportion) from broadleaf_area and conifer_area
+    # Compute target (conifer proportion) from broadleaf_area and conifer_area
     total_area = broadleaf_area.add(conifer_area)
-    if area_as_y:
-        y = broadleaf_area.addBands(conifer_area)
-        y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
-        y = y.rename([BROADLEAF_AREA, CONIFER_AREA])
+    if area_as_target:
+        target = broadleaf_area.addBands(conifer_area)
+        target = target.updateMask(
+            total_area.gt(0)
+        )  # Remove pixels with no trees
+        target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
-        y = conifer_area.divide(total_area)
-        y = y.updateMask(total_area.gt(0))  # Remove pixels with no trees
-        y = y.rename(CONIFER_PROPORTION)
+        target = conifer_area.divide(total_area)
+        target = target.updateMask(
+            total_area.gt(0)
+        )  # Remove pixels with no trees
+        target = target.rename(CONIFER_PROPORTION)
 
     # Clip to roi and reproject
-    y = y.clip(roi)
-    y = y.reproject(scale=scale, crs=crs)
+    target = target.clip(roi)
+    target = target.reproject(scale=scale, crs=crs)
 
-    # Save y
+    # Save target
     print("Computing labels...")
-    _save_image(y, y_path)
+    _save_image(target, target_path)
 
-    return y_path
+    return target_path
 
 
 @typechecked
 def sentinel_composite(
-    y_path_from: str,
-    X_path_to: str,
+    target_path_from: str,
+    data_path_to: str,
     time_window: Tuple[datetime.date, datetime.date],
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
@@ -775,12 +779,12 @@ def sentinel_composite(
     """Creates a composite from many Sentinel 2 satellite images for a given
     label image.
 
-    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
+    The raster will be saved to 'data_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
 
     Args:
-        y_path_from:
+        target_path_from:
             A string representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and resolution/pixel size of the image.
-        X_path_to:
+        data_path_to:
             A string representing the output file path to save the composite raster.
         time_window:
             A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved. The dates are converted to milliseconds. The end date is technically exclusive, but only by one millisecond.
@@ -821,7 +825,7 @@ def sentinel_composite(
         raise ValueError("Level-1C data is not available before 2015-06-27.")
 
     # Ensure proper path format
-    _path_check(y_path_from, X_path_to, suffix=".tif")
+    _path_check(target_path_from, data_path_to, suffix=".tif")
 
     # Check if indices are valid eemont indices
     if indices is not None:
@@ -881,7 +885,7 @@ def sentinel_composite(
         )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
-    roi, scale, crs = _get_roi_scale_crs(y_path_from)
+    roi, scale, crs = _get_roi_scale_crs(target_path_from)
 
     # Get Sentinel 2 image collection filtered by bounds
     if level_2a:
@@ -950,29 +954,29 @@ def sentinel_composite(
         pretty_names.append(pretty_name)
     data = data.rename(pretty_names)
 
-    # Save data (X)
+    # Save data
     print("Computing data...")
-    _save_image(data, X_path_to)
+    _save_image(data, data_path_to)
 
-    return X_path_to
+    return data_path_to
 
 
 @typechecked
 def palsar_raster(
-    y_path_from: str,
-    X_path_to: str,
+    target_path_from: str,
+    data_path_to: str,
     timestamp: datetime.date,
     sin_cos_angle: bool = True,
     exclude_future: bool = False,
 ) -> str:
     """Creates a raster containing PALSAR data for a given label image.
 
-    The raster will be saved to 'X_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. The "Global PALSAR-2/PALSAR Yearly Mosaic, version 2" dataset is used for the raster. It is available at https://developers.google.com/earth-engine/datasets/catalog/JAXA_ALOS_PALSAR_YEARLY_SAR_EPOCH and covers the years 2015 to 2022.
+    The raster will be saved to 'data_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. The "Global PALSAR-2/PALSAR Yearly Mosaic, version 2" dataset is used for the raster. It is available at https://developers.google.com/earth-engine/datasets/catalog/JAXA_ALOS_PALSAR_YEARLY_SAR_EPOCH and covers the years 2015 to 2022.
 
     Args:
-        y_path_from:
+        target_path_from:
             A string representing the file path to the label raster. This is used to derive the bounds and coordinate reference system.
-        X_path_to:
+        data_path_to:
             A string representing the output file path to save the raster.
         timestamp:
             A date representing the timestamp of the raster. As the images are sparse, the closest image to the timestamp is used.
@@ -989,7 +993,7 @@ def palsar_raster(
     print("Preparing PALSAR data...")
 
     # Ensure proper path format
-    _path_check(y_path_from, X_path_to, suffix=".tif")
+    _path_check(target_path_from, data_path_to, suffix=".tif")
 
     # Convert timestamp to milliseconds
     date_format = "%Y-%m-%d"
@@ -997,7 +1001,7 @@ def palsar_raster(
     milliseconds = ee.Date(date).millis().getInfo()
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
-    roi, scale, crs = _get_roi_scale_crs(y_path_from)
+    roi, scale, crs = _get_roi_scale_crs(target_path_from)
 
     # Get PALSAR image collection
     palsar = ee.ImageCollection("JAXA/ALOS/PALSAR/YEARLY/SAR_EPOCH")
@@ -1042,8 +1046,8 @@ def palsar_raster(
     palsar = palsar.clip(roi)
     palsar = palsar.reproject(scale=scale, crs=crs)
 
-    # Save data (X)
+    # Save data
     print("Computing data...")
-    _save_image(palsar, X_path_to)
+    _save_image(palsar, data_path_to)
 
-    return X_path_to
+    return data_path_to
