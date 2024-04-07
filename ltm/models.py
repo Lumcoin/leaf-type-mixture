@@ -48,7 +48,6 @@ from typing import Any, Callable, Dict, Iterator, List, Tuple
 import dill
 import matplotlib.pyplot as plt
 import numpy as np
-import numpy.typing
 import optuna
 import pandas as pd
 import rasterio
@@ -112,8 +111,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def split(
         self,
-        data: np.typing.ArrayLike,
-        target: np.typing.ArrayLike,
+        X: np.typing.ArrayLike,
+        y: np.typing.ArrayLike,
         groups: np.ndarray | None = None,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generates indices to split data into training and test set.
@@ -129,10 +128,10 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
         Yields:
             Tuple of indices for training and test set.
         """
-        data = np.array(data)
-        target = np.array(target)
-        for train, test in self.k_fold.split(data, target):
-            indices = np.where((target[train] == 0) | (target[train] == 1))[0]
+        X = np.array(X)
+        y = np.array(y)
+        for train, test in self.k_fold.split(X, y):
+            indices = np.where((y[train] == 0) | (y[train] == 1))[0]
 
             end_member_train = train[indices]
 
@@ -145,17 +144,17 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def get_n_splits(
         self,
-        data: np.typing.ArrayLike | None = None,
-        target: np.typing.ArrayLike | None = None,
+        X: np.typing.ArrayLike | None = None,
+        y: np.typing.ArrayLike | None = None,
         groups: np.ndarray | None = None,
     ) -> int:
         """Returns the number of splitting iterations in the cross-validator.
 
         Args:
-            data:
+            X:
                 Data to split. Not used.
-            target:
-                Labels to split. Not used.
+            y:
+                Target to split. Not used.
             groups:
                 Group labels to split. Not used.
 
@@ -271,7 +270,8 @@ def bands_from_importance(
     band_importance_path: str,
     level_2a: bool = True,
 ) -> Tuple[List[str], List[str]]:
-    """Extracts the band names of sentinel bands and indices from the band importance file.
+    """Extracts the band names of sentinel bands and indices from the band
+    importance file.
 
     The last band with an optimum in one of the scores is interpreted as the last band to be kept. All bands after this band are removed. The bands are then divided into sentinel bands and indices.
 

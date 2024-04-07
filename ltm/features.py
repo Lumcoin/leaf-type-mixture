@@ -26,7 +26,7 @@ Typical usage example:
 
 import os
 from collections import defaultdict
-from typing import List, Tuple
+from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -278,14 +278,16 @@ def drop_nan_rows(
 
 @typechecked
 def to_float32(data: pd.DataFrame) -> pd.DataFrame:
-    """Converts the data to float32 and replaces infinities with the maximum and minimum float32 values.
+    """Converts the data to float32 and replaces infinities with the maximum
+    and minimum float32 values.
 
     Args:
         data:
             A DataFrame containing the data.
 
     Returns:
-        A DataFrame containing the data as float32."""
+        A DataFrame containing the data as float32.
+    """
     float32_max = np.finfo(np.float32).max
     float32_min = np.finfo(np.float32).min
 

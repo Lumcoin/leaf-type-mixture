@@ -31,10 +31,10 @@ Typical usage example:
 import datetime
 import json
 import math
+from functools import lru_cache
 from itertools import product
 from pathlib import Path
-from time import sleep
-from typing import List, Set, Tuple
+from typing import List, Tuple
 
 import ee
 import eemont
@@ -54,11 +54,6 @@ from typeguard import typechecked
 BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
 CONIFER_PROPORTION = "Conifer Proportion"
-
-reducers = None
-level_2a_bands = None
-level_1c_bands = None
-index_bands = None
 
 
 @typechecked
@@ -314,6 +309,7 @@ def _path_check(
 
 
 @typechecked
+@lru_cache
 def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
     """Lists all valid reducers in the Earth Engine API.
 
@@ -358,11 +354,6 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
             "variance",
         ]
 
-    # Check for cached reducers
-    global reducers
-    if reducers is not None:
-        return reducers
-
     # Initialize Earth Engine API
     _initialize_ee()
     print("Checking for valid reducers...")
@@ -385,13 +376,11 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
         except (TypeError, ee.ee_exception.EEException):
             continue
 
-    # Cache reducers
-    reducers = valid_reducers
-
     return valid_reducers
 
 
 @typechecked
+@lru_cache
 def list_bands(level_2a: bool = True) -> List[str]:
     """Lists all valid bands in the Earth Engine API.
 
@@ -405,13 +394,6 @@ def list_bands(level_2a: bool = True) -> List[str]:
     # Initialize Earth Engine API
     _initialize_ee()
 
-    # Check for cached bands
-    global level_2a_bands, level_1c_bands
-    if level_2a and level_2a_bands is not None:
-        return level_2a_bands
-    if not level_2a and level_1c_bands is not None:
-        return level_1c_bands
-
     # Get all valid bands
     if level_2a:
         s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
@@ -419,16 +401,11 @@ def list_bands(level_2a: bool = True) -> List[str]:
         s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
     bands = s2.first().bandNames().getInfo()
 
-    # Cache bands
-    if level_2a:
-        level_2a_bands = bands
-    else:
-        level_1c_bands = bands
-
     return bands
 
 
 @typechecked
+@lru_cache
 def list_indices() -> List[str]:
     """Lists all valid indices for Sentinel-2.
 
@@ -437,11 +414,6 @@ def list_indices() -> List[str]:
     """
     # Initialize Earth Engine API
     _initialize_ee()
-
-    # Check for cached indices
-    global index_bands
-    if index_bands is not None:
-        return index_bands
 
     # Get all valid indices
     indices = eemont.common.indices()
@@ -453,9 +425,6 @@ def list_indices() -> List[str]:
 
     # Remove NIRvP (does need bands not available in Sentinel-2)
     s2_indices.remove("NIRvP")
-
-    # Cache indices
-    index_bands = s2_indices
 
     return s2_indices
 
