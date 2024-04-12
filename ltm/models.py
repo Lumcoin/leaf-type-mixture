@@ -48,6 +48,7 @@ from typing import Any, Callable, Dict, Iterator, List, Tuple
 import dill
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import optuna
 import pandas as pd
 import rasterio
@@ -111,8 +112,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def split(
         self,
-        X: np.typing.ArrayLike,
-        y: np.typing.ArrayLike,
+        X: npt.ArrayLike,
+        y: npt.ArrayLike,
         groups: np.ndarray | None = None,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generates indices to split data into training and test set.
@@ -144,8 +145,8 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
     def get_n_splits(
         self,
-        X: np.typing.ArrayLike | None = None,
-        y: np.typing.ArrayLike | None = None,
+        X: npt.ArrayLike | None = None,
+        y: npt.ArrayLike | None = None,
         groups: np.ndarray | None = None,
     ) -> int:
         """Returns the number of splitting iterations in the cross-validator.
@@ -293,11 +294,8 @@ def bands_from_importance(
     band_names = df.index
     df = df.reset_index()
 
-    # Find first band with an optimum in one of the scores
-    best_r2_idx = df["R2 Score"].idxmax()
-    best_mae_idx = df["Mean Absolute Error"].idxmin()
-    best_rmse_idx = df["Root Mean Squared Error"].idxmin()
-    best_idx = min(best_r2_idx, best_mae_idx, best_rmse_idx)
+    # Find band with minimum
+    best_idx = int(df["Root Mean Squared Error"].idxmin())
 
     # Divide bands into sentinel bands and indices
     best_bands = list(band_names[: best_idx + 1])
@@ -423,8 +421,8 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     score_func = scorer._score_func
 
     def mixture_score_func(
-        target_true: np.typing.ArrayLike,
-        target_pred: np.typing.ArrayLike,
+        target_true: npt.ArrayLike,
+        target_pred: npt.ArrayLike,
         *args,
         **kwargs,
     ) -> Callable:
@@ -494,18 +492,19 @@ def best_scores(
 def hyperparam_search(
     model: BaseEstimator,
     search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
-    data: np.typing.ArrayLike,
-    target: np.typing.ArrayLike,
+    data: npt.ArrayLike,
+    target: npt.ArrayLike,
     scorer: _BaseScorer,
     cv: int = 5,
     n_trials: int = 100,
     n_jobs: int = 1,
     random_state: int | None = None,
     save_folder: str | None = None,
+    use_caching: bool = True,
 ) -> Tuple[Pipeline, optuna.study.Study]:
     """Performs hyperparameter search for a model using optuna.
 
-    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best model will be returned along with the optuna study.
+    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best pipeline will be returned along with the optuna study.
 
     Args:
         model:
@@ -528,8 +527,11 @@ def hyperparam_search(
             Integer to be used as random state for reproducible results. Defaults to None.
         save_folder:
             Folder to save the study PKL and model PKL to. Uses model.__class__.__name__ to name the files. Skips search if files already exist. Defaults to None.
+        use_caching:
+            Whether to use caching for the search. Saves a [model]_cache.pkl for each step and resumes if a cache exists. The cache is deleted after the final study is saved. Defaults to True.
     """
     # Check for valid save_path
+    model_name = model.__class__.__name__
     if save_folder is not None:
         save_path_obj = Path(save_folder)
         if not save_path_obj.parent.exists():
@@ -538,7 +540,7 @@ def hyperparam_search(
             )
 
         # Check if files already exist
-        model_name = model.__class__.__name__
+        cache_path = save_path_obj / f"{model_name}_cache.pkl"
         study_path = save_path_obj / f"{model_name}_study.pkl"
         model_path = save_path_obj / f"{model_name}.pkl"
         if study_path.exists() and model_path.exists():
@@ -555,6 +557,16 @@ def hyperparam_search(
             raise ValueError(
                 f"Only one file exists, please delete it manually: {study_path}, {model_path}"
             )
+    elif use_caching:
+        print(
+            "Warning: use_caching=True but save_folder=None, caching is disabled."
+        )
+
+    def callback(study, trial):
+        # Save intermediate study
+        if use_caching and save_folder is not None:
+            with open(cache_path, "wb") as file:
+                dill.dump(study, file)
 
     def objective(trial):
         # Choose whether to standardize and apply PCA
@@ -593,11 +605,38 @@ def hyperparam_search(
         return score
 
     # Optimize study with random state
-    sampler = optuna.samplers.TPESampler(seed=random_state)
-    study = optuna.create_study(
-        sampler=sampler, direction="maximize", study_name=model_name
+    if use_caching and save_folder is not None and Path(cache_path).exists():
+        with open(cache_path, "rb") as file:
+            study = dill.load(file)
+        finished_trials = len(study.trials)
+        n_trials -= finished_trials
+
+        print(f"Resuming search from cache at trial {finished_trials}.")
+    else:
+        sampler = optuna.samplers.TPESampler(seed=random_state)
+        study = optuna.create_study(
+            sampler=sampler, direction="maximize", study_name=model_name
+        )
+    study.optimize(
+        objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
     )
-    study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs)
+
+    # Define pipeline steps for best model
+    steps = []
+    if study.best_params["do_standardize"]:
+        steps.append(("scaler", StandardScaler()))
+    if study.best_params["do_pca"]:
+        steps.append(
+            ("pca", PCA(n_components=study.best_params["n_components"]))
+        )
+    model_params = {
+        args[0]: study.best_params[args[0]] for _, args, _ in search_space
+    }
+    model = model.set_params(**model_params)
+
+    # Create best model
+    steps.append(("model", model))
+    best_model = Pipeline(steps=steps)
 
     # Save study results and best model using dill
     if save_folder is not None:
@@ -605,24 +644,13 @@ def hyperparam_search(
         with open(study_path, "wb") as file:
             dill.dump(study, file)
 
-        # Define pipeline steps for best model
-        steps = []
-        if study.best_params["do_standardize"]:
-            steps.append(("scaler", StandardScaler()))
-        if study.best_params["do_pca"]:
-            steps.append(
-                ("pca", PCA(n_components=study.best_params["n_components"]))
-            )
-        model_params = {
-            args[0]: study.best_params[args[0]] for _, args, _ in search_space
-        }
-        model = model.set_params(**model_params)
-
-        # Create and save best model
-        steps.append(("model", model))
-        best_model = Pipeline(steps=steps)
+        # Save best model
         with open(model_path, "wb") as file:
             dill.dump(best_model, file)
+
+        # Delete cache
+        if use_caching:
+            Path(cache_path).unlink()
 
     return best_model, study
 

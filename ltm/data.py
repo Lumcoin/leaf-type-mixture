@@ -308,8 +308,8 @@ def _path_check(
             raise ValueError(f"{path} does not exist")
 
 
-@typechecked
 @lru_cache
+@typechecked
 def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
     """Lists all valid reducers in the Earth Engine API.
 
@@ -379,8 +379,8 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
     return valid_reducers
 
 
-@typechecked
 @lru_cache
+@typechecked
 def list_bands(level_2a: bool = True) -> List[str]:
     """Lists all valid bands in the Earth Engine API.
 
@@ -404,8 +404,8 @@ def list_bands(level_2a: bool = True) -> List[str]:
     return bands
 
 
-@typechecked
 @lru_cache
+@typechecked
 def list_indices() -> List[str]:
     """Lists all valid indices for Sentinel-2.
 
