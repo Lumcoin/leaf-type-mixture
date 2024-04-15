@@ -21,7 +21,7 @@ pip install -e .
 
 The code in this repository is formatted using following commands:
 ```bash
-pip install isort docformatter black
+pip install isort docformatter black[jupyter]
 isort --profile black .
 docformatter --in-place --recursive .
 black --line-length 80 .

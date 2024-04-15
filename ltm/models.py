@@ -64,6 +64,7 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
 from typeguard import typechecked
 
 from ltm.data import (
@@ -655,143 +656,44 @@ def hyperparam_search(
     return best_model, study
 
 
-# TODO: improve formatting of figure
 @typechecked
 def cv_predict(
-    search_results: List[RandomizedSearchCV],
-    data_path: str | List[str],
-    target_path: str | List[str],
-    rgb_bands: List[str] | None = None,
+    model: BaseEstimator,
+    data_path: str,
+    target_path: str,
     cv: int | BaseCrossValidator | None = None,
-    area2mixture: bool = False,
-    save_path: str | None = None,
-) -> Tuple[np.ndarray, List[np.ndarray]]:
+) -> np.ndarray:
     """Predicts the labels using cross_val_predict and plots the results for
     each model.
 
     Args:
-        search_results:
-            List of search results from hyperparameter search.
+        model:
+            Regressor to use for prediction.
         data_path:
-            Single string with path to the data in GeoTIFF format.
+            A string with path to the data in GeoTIFF format.
         target_path:
-            Single string with path to the target data in GeoTIFF format.
-        rgb_bands:
-            A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
+            A string with path to the target data in GeoTIFF format.
         cv:
-            An integer for the number of folds or a BaseCrossValidator object for performing cross validation. Defaults to None.
-        random_state:
-            Integer to be used as random state for reproducible results.
-        area2mixture:
-            Whether to show the computed leaf type mixture from leaf type areas as labels. Defaults to False.
-        save_path:
-            Path to save the plot to with either JPG or PNG suffix. Defaults to None.
+            An integer for the number of folds or a BaseCrossValidator object for performing cross validation. Will be passed to sklearn.model_selection.cross_val_predict(). Defaults to None.
 
     Returns:
         Tuple of ground truth image and list of predicted images.
     """
-    # Check for valid save_path and valid suffix
-    if save_path is not None:
-        save_path_obj = Path(save_path)
-        if save_path_obj.suffix not in [".jpg", ".png"]:
-            raise ValueError(
-                f"save_path must have suffix '.jpg' or '.png' or be None: {save_path}"
-            )
-        if not save_path_obj.parent.exists():
-            raise ValueError(
-                f"Directory of save_path does not exist: {save_path_obj.parent}"
-            )
-
     # Load data and plot shape
     data = load_raster(data_path)
     target = load_raster(target_path)
 
     with rasterio.open(target_path) as src:
-        bands = src.descriptions
         shape = src.read().shape
-
-    # Check if target has only one band and area2mixture is True -> raise error
-    if area2mixture:
-        if shape[0] > 1:
-            bands = tuple([CONIFER_PROPORTION])
-        else:
-            print(
-                "'area2mixture=True' is ignored: target has only one band, so computing the mixture from area is not possible."
-            )
-            area2mixture = False
 
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
     data, target, indices_array = drop_nan_rows(data, target, indices_array)
 
     # Predict using cross_val_predict
-    plots = []
-    rgb_plots = []
-    for result in search_results:
-        target_pred = cross_val_predict(
-            result.best_estimator_, data, target, cv=cv
-        )
-        target_pred = np2pd_like(target_pred, target)
+    target_pred = cross_val_predict(model, data, target, cv=cv, n_jobs=-1)
+    target_pred = np2pd_like(target_pred, target)
 
-        plot = _target2raster(
-            target_pred, indices_array, shape, area2mixture=area2mixture
-        )
-        plots.append(plot)
-        rgb_plot = raster2rgb(plot, bands, rgb_bands)
-        rgb_plots.append(rgb_plot)
+    plot = _target2raster(target_pred, indices_array, shape)
 
-    # Create ground truth image
-    gt_plot = _target2raster(
-        target, indices_array, shape, area2mixture=area2mixture
-    )
-    rgb_gt_plot = raster2rgb(gt_plot, bands, rgb_bands)
-
-    # Prepare plots for plotting by normalizing and removing nan
-    maximum = np.nanmax(
-        [np.nanmax(rgb_plot) for rgb_plot in rgb_plots]
-        + [np.nanmax(rgb_gt_plot)]
-    )
-
-    rgb_gt_plot = rgb_gt_plot / maximum
-    rgb_plots = [rgb_plot / maximum for rgb_plot in rgb_plots]
-
-    rgb_gt_plot[np.isnan(rgb_gt_plot)] = 0
-    for rgb_plot in rgb_plots:
-        mask = np.logical_or(np.isnan(rgb_plot), rgb_plot < 0)
-        rgb_plot[mask] = 0
-
-    # Convert plots to 2D if target has only one band
-    if gt_plot.shape[0] == 1:
-        rgb_gt_plot = rgb_gt_plot[:, :, 0]
-        rgb_plots = [rgb_plot[:, :, 0] for rgb_plot in rgb_plots]
-
-    # Plot original image with title "original"
-    ax = plt.subplot()
-    ax.imshow(rgb_gt_plot, interpolation="nearest")
-    ax.set_title("Ground Truth")
-    if save_path is not None:
-        gt_image = plot2array()
-
-    # Plot predicted images with title "predicted" and name of regressor as subtitle for each plot
-    number_plots = len(rgb_plots)
-    ncols = np.ceil(number_plots**0.5).astype(int)
-    nrows = np.ceil(number_plots / ncols).astype(int)
-
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols)
-    fig.suptitle("Predicted")
-    axs = np.asarray(axs).flatten()
-    for rgb_plot, ax, result in zip(rgb_plots, axs, search_results):
-        ax.imshow(rgb_plot, interpolation="nearest")
-        ax.set_title(result.best_estimator_.__class__.__name__)
-
-    for ax in axs[len(rgb_plots) :]:
-        ax.axis("off")
-
-    if save_path is not None:
-        pred_image = plot2array(fig)
-        image = np.concatenate((gt_image, pred_image), axis=0)
-        plt.imsave(save_path, image)
-
-    plt.show()
-
-    return gt_plot, plots
+    return plot

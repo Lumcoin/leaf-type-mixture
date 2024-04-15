@@ -734,6 +734,72 @@ def compute_label(
 
 
 @typechecked
+def shapefile2raster(
+    target_path: str,
+    shapefile_path: str,
+) -> str:
+    # Initialize Earth Engine API
+    _initialize_ee()
+    print("Preparing labels...")
+
+    # Ensure proper path format
+    target_pathlib = Path(target_path)
+    if target_pathlib.suffix != ".tif":
+        raise ValueError("target_path must be a string ending in .tif")
+    if not target_pathlib.parent.exists():
+        raise ValueError(
+            f"target_path parent directory does not exist: {target_pathlib.parent}"
+        )
+
+    # Load shapefile
+    shapefile = gpd.read_file(shapefile_path)
+    shapefile = shapefile.to_crs("EPSG:4326")
+
+    polygons = []
+    for _, row in shapefile.iterrows():
+        polygon = row.geometry
+        geojson = polygon.__geo_interface__["coordinates"]
+        gee_polygon = ee.Geometry.Polygon(geojson)
+        polygons.append(gee_polygon)
+    polygons = ee.FeatureCollection(polygons)
+
+    # Get region of interest (ROI)
+    roi = polygons.geometry()
+
+    # Get CRS in epsg format for center of the roi
+    longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
+    crs = _sentinel_crs(latitude, longitude)
+
+    # Convert ROI to bounds in output crs
+    roi = roi.bounds(0.01, crs)
+
+    # Check if rectangle has reasonable size
+    roi_area = roi.area(0.01).getInfo()
+    if roi_area == 0:
+        raise ValueError(
+            "Plot bounding box has area 0. Check if plot coordinates are valid."
+        )
+    if roi_area > 1e10:
+        raise ValueError(
+            "Plot bounding box has area > 1e10. Check if plot coordinates are valid."
+        )
+
+    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
+    scale = 10
+
+    # Clip to roi and reproject
+    target = ee.Image.constant(1)
+    target = target.clip(polygons.geometry())
+    target = target.reproject(scale=scale, crs=crs)
+
+    # Save target
+    print("Computing image...")
+    _save_image(target, target_path)
+
+    return target_path
+
+
+@typechecked
 def sentinel_composite(
     target_path_from: str,
     data_path_to: str,
