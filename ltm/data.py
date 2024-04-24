@@ -34,6 +34,7 @@ import math
 from functools import lru_cache
 from itertools import product
 from pathlib import Path
+from time import sleep
 from typing import List, Tuple
 
 import ee
@@ -48,7 +49,7 @@ import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
 from shapely import MultiPolygon, to_geojson
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from typeguard import typechecked
 
 BROADLEAF_AREA = "Broadleaf Area"
@@ -175,33 +176,33 @@ def _download_image(
     }
     url = image.getDownloadURL(download_params)
 
-    return requests.get(url)
+    return requests.get(url, timeout=600)
 
 
 @typechecked
-def _image_response2file(
+def _image_response2data(
     image: bytes,
-    file_path: str,
     mask: bytes,
-    bands: List[str],
-) -> None:
+) -> Tuple[rasterio.profiles.Profile, np.ndarray]:
     with MemoryFile(image) as memfile, MemoryFile(mask) as mask_memfile:
         with memfile.open() as dataset, mask_memfile.open() as mask_dataset:
+            # Get profile and set nodata to np.nan
             profile = dataset.profile
             profile["nodata"] = np.nan
-            with rasterio.open(file_path, "w", **profile) as dst:
-                raster = dataset.read()
-                mask_raster = mask_dataset.read()
-                raster[mask_raster == 0] = np.nan
-                dst.write(raster)
-                dst.descriptions = tuple(bands)
+
+            # Read and mask raster
+            raster = dataset.read()
+            mask_raster = mask_dataset.read()
+            raster[mask_raster == 0] = np.nan
+
+    return profile, raster
 
 
 @typechecked
-def _save_image(
+def _get_image_data(
     image: ee.Image,
-    file_path: str,
-) -> None:
+) -> Tuple[rasterio.profiles.Profile, np.ndarray] | None:
+    # Download image and mask
     try:
         image = image.toDouble()
         image_response = _download_image(image)
@@ -211,18 +212,64 @@ def _save_image(
             "Failed to compute image. Please check the timewindow first, maybe it is too small. This error can occur if there is no data for the given timewindow."
         ) from exc
 
+    # Get profile and raster
     if image_response.status_code == mask_response.status_code == 200:
-        _image_response2file(
+        profile, raster = _image_response2data(
             image_response.content,
-            file_path,
             mask=mask_response.content,
-            bands=image.bandNames().getInfo(),
         )
-        print(f"GeoTIFF saved as {file_path}")
-    else:
-        print(
-            f"FAILED to either compute or download the image for {file_path} most likely due to computational limits of Google Earth Engine."
-        )
+        return profile, raster
+
+    # Return None if download failed
+    return None
+
+
+@typechecked
+def _save_image(
+    image: ee.Image,
+    file_path: str,
+    max_retries: int = 5,
+) -> None:
+    # Get image data
+    profile = None
+    image_raster = None
+    bands = image.bandNames().getInfo()
+    for band in tqdm(bands):
+        # Select band and use mask of original image
+        band_image = image.select([band])
+
+        # Get band data, try max_retries often before giving up
+        sleep_time = 60
+        for i in range(max_retries):
+            try:
+                band_data = _get_image_data(band_image)
+                if band_data is None:
+                    raise ValueError(
+                        f"FAILED to either compute or download the image for {file_path} most likely due to computational limits of Google Earth Engine."
+                    )
+                profile, raster = band_data
+            except ValueError as exc:
+                if i == max_retries - 1:
+                    raise exc
+
+                print("Retrying because an error occured.")
+                sleep(sleep_time)
+                sleep_time *= 2
+
+        # Concatenate raster
+        if image_raster is None:
+            image_raster = raster
+        else:
+            image_raster = np.concatenate((image_raster, raster), axis=0)
+
+    profile["count"] = len(bands)
+
+    # Save image
+    with rasterio.open(file_path, "w", **profile) as dst:
+        dst.write(image_raster)
+        dst.descriptions = bands
+
+    print(f"GeoTIFF saved as {file_path}")
 
 
 @typechecked

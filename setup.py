@@ -10,18 +10,23 @@ setup(
     author="Peter Hofinger",
     license="MIT",
     install_requires=[
-        "bayesian-optimization",
+        "dask[dataframe,distributed]",  # for scikit-elm
+        "dill",  # for pickling objects with lambda functions
         "ee",
         "eemont",
         "geopandas",
+        "ipywidgets",  # for tqdm
         "rasterio",
         "matplotlib",
         "numpy",
+        "optuna",
         "pandas",
         "pyproj",
         "requests",
+        "scikit-elm",
         "scikit-learn",
         "SciencePlots",
+        "seaborn",
         "tqdm",
         "typeguard",
         "utm",

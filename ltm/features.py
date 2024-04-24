@@ -37,7 +37,7 @@ from scipy.cluster.hierarchy import dendrogram, ward
 from scipy.spatial.distance import squareform
 from scipy.stats import spearmanr
 from sklearn.feature_selection import mutual_info_regression
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from typeguard import typechecked
 
 
@@ -361,7 +361,7 @@ def get_similarity_matrix(
     # Raise error if similarity matrix is NaN
     if similarity_matrix is np.nan:
         raise ValueError(
-            f"Could not compute similarity matrix... This commonly occurs if a band has deviation of zero"
+            "Could not compute similarity matrix... This commonly occurs if a band has deviation of zero"
         )
 
     # Ensure the similarity matrix is normalized, symmetric, with diagonal of ones
@@ -442,10 +442,10 @@ def show_dendrogram(
         raise ValueError("Similarity matrix must be square.")
 
     # Show dendrogram
-    fig, ax = plt.subplots(figsize=(16, 16))
+    _, ax = plt.subplots(figsize=(16, 16))
     distance_matrix = 1 - similarity_matrix
     dist_linkage = ward(squareform(distance_matrix))
-    dendro = dendrogram(
+    _ = dendrogram(
         dist_linkage, labels=similarity_matrix.columns, ax=ax, leaf_rotation=90
     )
 

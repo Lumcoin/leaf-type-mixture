@@ -7,17 +7,12 @@ This repository belongs to the paper ---. Thus most functions in this repository
 
 Requires Python>=3.10
 
-If you are new to python, we recommend to install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and create a environment called "ltm" using `conda create -n ltm python=3.10 ipykernel`. You can then activate the environment using `conda activate ltm` and install the "ltm" package of this repository using:
+If you are new to python, we recommend to install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and create a environment called "ltm" using `conda create -n ltm python=3.10 ipykernel`. Now navigate to the folder where this repository is cloned to using the `cd [path/to/leaf-type-mixture]` (replace path within square brackets `[]`) command. You can then activate the environment using `conda activate ltm` and install the "ltm" package and its dependencies of this repository using:
 ```bash
 pip install -e .
 ```
 
-The "`.`" (dot) in above code cell is no typo, it is the path to the current directory.
-
-Install the ltm package to your active environment:
-```bash
-pip install -e .
-```
+The "`.`" (dot) in above code cell is no typo, it is the path to the current directory. Then call `import ee; ee.Authenticate()` in a code cell to authenticate with Google Earth Engine.
 
 The code in this repository is formatted using following commands:
 ```bash

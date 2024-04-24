@@ -54,7 +54,7 @@ import pandas as pd
 import rasterio
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
-from sklearn.metrics._scorer import _BaseScorer, _PredictScorer
+from sklearn.metrics._scorer import _BaseScorer
 from sklearn.model_selection import (
     BaseCrossValidator,
     KFold,
@@ -64,7 +64,7 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 from typeguard import typechecked
 
 from ltm.data import (
@@ -200,6 +200,40 @@ def _target2raster(
         raster = np.expand_dims(raster, axis=0)
 
     return raster
+
+
+@typechecked
+def _study2model(
+    study: optuna.study.Study,
+    model: BaseEstimator,
+    data: npt.ArrayLike,
+    target: npt.ArrayLike,
+) -> Pipeline:
+    # Define preprocessing steps for best model
+    steps = []
+    if study.best_params["do_standardize"]:
+        steps.append(("scaler", StandardScaler()))
+    if study.best_params["do_pca"]:
+        steps.append(
+            ("pca", PCA(n_components=study.best_params["n_components"]))
+        )
+
+    # Define model step
+    model_params = {
+        param: value
+        for param, value in study.best_params.items()
+        if param not in ["do_standardize", "do_pca", "n_components"]
+    }
+    model = model.set_params(**model_params)
+
+    # Create best model
+    steps.append(("model", model))
+    best_model = Pipeline(steps=steps)
+
+    # Fit best model
+    best_model.fit(data, target)
+
+    return best_model
 
 
 @typechecked
@@ -449,7 +483,7 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
 @typechecked
 def best_scores(
     search_results: List[RandomizedSearchCV],
-    scoring: Dict[str, _PredictScorer],
+    scoring: Dict[str, _BaseScorer],
 ) -> pd.DataFrame:
     """Returns the best scores for each model.
 
@@ -548,15 +582,32 @@ def hyperparam_search(
             print(
                 f"Files already exist, skipping search: {study_path}, {model_path}"
             )
+
+            # Load best model and study
             with open(model_path, "rb") as file:
                 best_model = dill.load(file)
             with open(study_path, "rb") as file:
                 study = dill.load(file)
 
             return best_model, study
-        if study_path.exists() or model_path.exists():
+        elif study_path.exists():
+            # Inform user
+            print(f"Creating model from study file...")
+
+            # Load the study and create the best model
+            with open(study_path, "rb") as file:
+                study = dill.load(file)
+            best_model = _study2model(study, model, data, target)
+
+            # Save best model
+            with open(model_path, "wb") as file:
+                dill.dump(best_model, file)
+
+            return best_model, study
+        elif model_path.exists():
+            # Raise error if model file exists but study file is missing
             raise ValueError(
-                f"Only one file exists, please delete it manually: {study_path}, {model_path}"
+                f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             )
     elif use_caching:
         print(
@@ -622,22 +673,25 @@ def hyperparam_search(
         objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
     )
 
-    # Define pipeline steps for best model
-    steps = []
-    if study.best_params["do_standardize"]:
-        steps.append(("scaler", StandardScaler()))
-    if study.best_params["do_pca"]:
-        steps.append(
-            ("pca", PCA(n_components=study.best_params["n_components"]))
-        )
-    model_params = {
-        args[0]: study.best_params[args[0]] for _, args, _ in search_space
-    }
-    model = model.set_params(**model_params)
+    # TODO: delete
+    # # Define pipeline steps for best model
+    # steps = []
+    # if study.best_params["do_standardize"]:
+    #     steps.append(("scaler", StandardScaler()))
+    # if study.best_params["do_pca"]:
+    #     steps.append(
+    #         ("pca", PCA(n_components=study.best_params["n_components"]))
+    #     )
+    # model_params = {
+    #     args[0]: study.best_params[args[0]] for _, args, _ in search_space
+    # }
+    # model = model.set_params(**model_params)
 
-    # Create best model
-    steps.append(("model", model))
-    best_model = Pipeline(steps=steps)
+    # # Create best model
+    # steps.append(("model", model))
+    # best_model = Pipeline(steps=steps)
+
+    best_model = _study2model(study, model, data, target)
 
     # Save study results and best model using dill
     if save_folder is not None:
