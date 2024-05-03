@@ -54,6 +54,7 @@ import pandas as pd
 import rasterio
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
+from sklearn.impute import KNNImputer
 from sklearn.metrics._scorer import _BaseScorer
 from sklearn.model_selection import (
     BaseCrossValidator,
@@ -203,6 +204,18 @@ def _target2raster(
 
 
 @typechecked
+def has_nan_error(
+    estimator: BaseEstimator,
+) -> bool:
+    try:
+        estimator.fit([[0]], [0])
+        estimator.predict([[np.nan]])
+        return False
+    except ValueError:
+        return True
+
+
+@typechecked
 def _study2model(
     study: optuna.study.Study,
     model: BaseEstimator,
@@ -211,6 +224,8 @@ def _study2model(
 ) -> Pipeline:
     # Define preprocessing steps for best model
     steps = []
+    if has_nan_error(model):
+        steps.append(("imputer", KNNImputer()))
     if study.best_params["do_standardize"]:
         steps.append(("scaler", StandardScaler()))
     if study.best_params["do_pca"]:
@@ -530,7 +545,7 @@ def hyperparam_search(
     data: npt.ArrayLike,
     target: npt.ArrayLike,
     scorer: _BaseScorer,
-    cv: int = 5,
+    cv: int | BaseCrossValidator = 5,
     n_trials: int = 100,
     n_jobs: int = 1,
     random_state: int | None = None,
@@ -539,7 +554,7 @@ def hyperparam_search(
 ) -> Tuple[Pipeline, optuna.study.Study]:
     """Performs hyperparameter search for a model using optuna.
 
-    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best pipeline will be returned along with the optuna study.
+    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best pipeline will be returned along with the optuna study. A KNNImputer is used for estimators not supporting NaN values.
 
     Args:
         model:
@@ -553,7 +568,7 @@ def hyperparam_search(
         scorer:
             Scorer to use for hyperparameter search. Please make sure to set greater_is_better=False when using make_scorer if you want to minimize a metric.
         cv:
-            Number of folds to use for cross validation. Defaults to 5.
+            Number of folds or BaseCrossValidator instance to use for cross validation. Defaults to 5.
         n_trials:
             Number of trials to perform for hyperparameter search. Defaults to 100.
         n_jobs:
@@ -632,8 +647,9 @@ def hyperparam_search(
         if do_standardize:
             steps.append(("scaler", StandardScaler()))
         if do_pca:
+            n_splits = cv if isinstance(cv, int) else cv.get_n_splits()
             max_components = min(data.shape) - np.ceil(
-                min(data.shape) / cv
+                min(data.shape) / n_splits
             ).astype(int)
             n_components = trial.suggest_int("n_components", 1, max_components)
             steps.append(("pca", PCA(n_components=n_components)))
@@ -649,12 +665,17 @@ def hyperparam_search(
 
         # Cross validate pipeline
         pipe = Pipeline(steps=steps)
-        cv_results = cross_validate(
-            pipe, data, target, cv=cv, scoring=scorer, n_jobs=-1
-        )
-        score = cv_results["test_score"].mean()
+        try:
+            cv_results = cross_validate(
+                pipe, data, target, cv=cv, scoring=scorer, n_jobs=-1
+            )
+            score = cv_results["test_score"].mean()
 
-        return score
+            return score
+        # Catch case that all fits fail
+        except ValueError:
+            print("All fits failed, returning NaN.")
+            return np.nan
 
     # Optimize study with random state
     if use_caching and save_folder is not None and Path(cache_path).exists():
@@ -672,24 +693,6 @@ def hyperparam_search(
     study.optimize(
         objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
     )
-
-    # TODO: delete
-    # # Define pipeline steps for best model
-    # steps = []
-    # if study.best_params["do_standardize"]:
-    #     steps.append(("scaler", StandardScaler()))
-    # if study.best_params["do_pca"]:
-    #     steps.append(
-    #         ("pca", PCA(n_components=study.best_params["n_components"]))
-    #     )
-    # model_params = {
-    #     args[0]: study.best_params[args[0]] for _, args, _ in search_space
-    # }
-    # model = model.set_params(**model_params)
-
-    # # Create best model
-    # steps.append(("model", model))
-    # best_model = Pipeline(steps=steps)
 
     best_model = _study2model(study, model, data, target)
 

@@ -288,6 +288,8 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
     Returns:
         A DataFrame containing the data as float32.
     """
+    data = data.copy()
+
     float32_max = np.finfo(np.float32).max
     float32_min = np.finfo(np.float32).min
 

@@ -28,23 +28,24 @@ Typical usage example:
     )
 """
 
+import asyncio
 import datetime
 import json
 import math
 from functools import lru_cache
 from itertools import product
 from pathlib import Path
-from time import sleep
-from typing import List, Tuple
+from typing import Any, Coroutine, List, Tuple
 
+import aiohttp
 import ee
 import eemont
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import nest_asyncio
 import numpy as np
 import pandas as pd
 import rasterio
-import requests
 import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
@@ -166,9 +167,58 @@ def _split_reducer_band_name(
 
 
 @typechecked
-def _download_image(
+async def _fetch(
+    url: str,
+) -> bytes:
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                raise ValueError(f"Failed to fetch {url}")
+            return await response.read()
+
+
+@typechecked
+async def wrap_coroutine(
+    idx: int,
+    coroutine: Coroutine,
+) -> Tuple[int, Any]:
+    result = await coroutine
+
+    return idx, result
+
+
+@typechecked
+async def async_gather(
+    *coroutines: Coroutine,
+    desc: str | None = None,
+) -> list[Any]:
+    with tqdm(total=len(coroutines), desc=desc) as pbar:
+        wrapper = [
+            wrap_coroutine(idx, coroutine)
+            for idx, coroutine in enumerate(coroutines)
+        ]
+        results = [None] * len(coroutines)
+        for future in asyncio.as_completed(wrapper):
+            i, result = await future
+            results[i] = result
+            pbar.update(1)
+
+    return results
+
+
+@typechecked
+def gather(
+    *coroutines: Coroutine,
+    desc: str | None = None,
+) -> list[Any]:
+    nest_asyncio.apply()
+    return asyncio.run(async_gather(*coroutines, desc=desc))
+
+
+@typechecked
+async def _fetch_image(
     image: ee.Image,
-) -> requests.Response:
+) -> bytes:
     download_params = {
         "scale": image.projection().nominalScale().getInfo(),
         "crs": image.projection().getInfo()["crs"],
@@ -176,11 +226,11 @@ def _download_image(
     }
     url = image.getDownloadURL(download_params)
 
-    return requests.get(url, timeout=600)
+    return await _fetch(url)
 
 
 @typechecked
-def _image_response2data(
+def _responses2data(
     image: bytes,
     mask: bytes,
 ) -> Tuple[rasterio.profiles.Profile, np.ndarray]:
@@ -199,72 +249,67 @@ def _image_response2data(
 
 
 @typechecked
-def _get_image_data(
+async def _get_image_data(
     image: ee.Image,
+    bands: list[str] | None = None,
 ) -> Tuple[rasterio.profiles.Profile, np.ndarray] | None:
-    # Download image and mask
+    # Select bands
+    if bands is not None:
+        image = image.select(bands)
+
     try:
+        # Download image and mask
         image = image.toDouble()
-        image_response = _download_image(image)
-        mask_response = _download_image(image.mask())
+        image_response = await _fetch_image(image)
+        mask_response = await _fetch_image(image.mask())
     except ee.ee_exception.EEException as exc:
         raise ValueError(
-            "Failed to compute image. Please check the timewindow first, maybe it is too small. This error can occur if there is no data for the given timewindow."
+            "Failed to compute image. A small batch_size might fix this error."
         ) from exc
 
     # Get profile and raster
-    if image_response.status_code == mask_response.status_code == 200:
-        profile, raster = _image_response2data(
-            image_response.content,
-            mask=mask_response.content,
-        )
-        return profile, raster
+    profile, raster = _responses2data(
+        image_response,
+        mask_response,
+    )
 
-    # Return None if download failed
-    return None
+    return profile, raster
 
 
 @typechecked
 def _save_image(
     image: ee.Image,
     file_path: str,
-    max_retries: int = 5,
+    batch_size: int | None = None,
 ) -> None:
     # Get image data
     profile = None
     image_raster = None
     bands = image.bandNames().getInfo()
-    for band in tqdm(bands):
-        # Select band and use mask of original image
-        band_image = image.select([band])
 
-        # Get band data, try max_retries often before giving up
-        sleep_time = 60
-        for i in range(max_retries):
-            try:
-                band_data = _get_image_data(band_image)
-                if band_data is None:
-                    raise ValueError(
-                        f"FAILED to either compute or download the image for {file_path} most likely due to computational limits of Google Earth Engine."
-                    )
-                profile, raster = band_data
-            except ValueError as exc:
-                if i == max_retries - 1:
-                    raise exc
+    # Create batches of bands
+    if batch_size is None:
+        batch_size = len(bands)
+    band_batches = [
+        bands[i : i + batch_size] for i in range(0, len(bands), batch_size)
+    ]
 
-                print("Retrying because an error occured.")
-                sleep(sleep_time)
-                sleep_time *= 2
+    # Warn user of GEE quota limits
+    if len(band_batches) > 40:
+        print(
+            "Warning: Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size."
+        )
 
-        # Concatenate raster
-        if image_raster is None:
-            image_raster = raster
-        else:
-            image_raster = np.concatenate((image_raster, raster), axis=0)
+    # Get all image data using gather()
+    coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
+    results = gather(*coroutines, desc="Batches")
 
-    profile["count"] = len(bands)
+    # Combine results
+    profile = results[0][0]
+    image_raster = np.concatenate([raster for _, raster in results], axis=0)
 
     # Save image
+    profile["count"] = len(bands)
     with rasterio.open(file_path, "w", **profile) as dst:
         dst.write(image_raster)
         dst.descriptions = bands
@@ -293,13 +338,27 @@ def _mask_s2_clouds(
     cirrus_bit_mask = 1 << 11
 
     # Both flags should be set to zero, indicating clear conditions.
-    mask = (
-        qa.bitwiseAnd(cloud_bit_mask)
-        .eq(0)
-        .And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
-    )
+    mask = qa.bitwiseAnd(cloud_bit_mask).eq(0)
+    mask = mask.And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
 
-    return image.updateMask(mask).divide(10000)
+    return image.updateMask(mask)
+
+
+@typechecked
+def _mask_level_2a(
+    image: ee.Image,
+) -> ee.Image:
+    # Mask clouds
+    cloud_prob = image.select("MSK_CLDPRB")
+    cloud_prob = cloud_prob.unmask(sameFootprint=False)
+    mask = cloud_prob.eq(0)
+
+    # Mask snow
+    snow_prob = image.select("MSK_SNWPRB")
+    snow_prob = snow_prob.unmask(sameFootprint=False)
+    mask = mask.And(snow_prob.eq(0))
+
+    return image.updateMask(mask)
 
 
 @typechecked
@@ -548,14 +607,26 @@ def show_timeseries(
             if rgb_band is not None:
                 _, _, rgb_bands[i] = split_band_name(rgb_bands[i])
 
+    # Find the number of composites and the reducer title
+    reducer_title = ""
+    num_composites = 0
+    for band in bands:
+        composite_idx, curr_reducer, _ = split_band_name(band)
+        if curr_reducer.lower() == reducer.lower():
+            reducer_title = curr_reducer
+            num_composites = max(num_composites, composite_idx)
+
+    if num_composites == 0:
+        raise ValueError(f"No bands found with reducer {reducer}")
+
     # Get the rasters for the rgb bands
-    num_composites, reducer_title, _ = split_band_name(bands[-1])
     rgb_rasters = []
     for i in range(1, num_composites + 1):
         rgb_raster = []
         for b in rgb_bands:
             if b is not None:
                 raster_band = combine_band_name(i, reducer, b).lower()
+                raster_band = raster_band.replace("_", " ")
                 band_raster = raster[bands_lower.index(raster_band)]
             else:
                 band_raster = np.zeros_like(raster[0])
@@ -666,7 +737,7 @@ def compute_label(
         target_path:
             A string representing the file path to save the raster with values between 0 and 1 for the conifer proportion.
         plot:
-            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a broadleaf (1 is broadleaf, 0 is conifer). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
+            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
         area_as_target:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a target with two bands, one for each leaf type. Defaults to False.
 
@@ -679,7 +750,7 @@ def compute_label(
 
     # Ensure proper plot DataFrame format
     expected_dtypes = {
-        "broadleaf": np.int8,
+        "conifer": np.int8,
         "dbh": np.float64,
         "latitude": np.float64,
         "longitude": np.float64,
@@ -711,10 +782,10 @@ def compute_label(
             ]
         ).buffer(row["dbh"] / 2)
 
-        if row["broadleaf"]:
-            broadleafs.append(circle)
-        else:
+        if row["conifer"]:
             conifers.append(circle)
+        else:
+            broadleafs.append(circle)
     broadleafs = ee.FeatureCollection(broadleafs)
     conifers = ee.FeatureCollection(conifers)
 
@@ -857,6 +928,7 @@ def sentinel_composite(
     level_2a: bool = True,
     sentinel_bands: List[str] | None = None,
     remove_clouds: bool = True,
+    batch_size: int | None = None,
 ) -> str:
     """Creates a composite from many Sentinel 2 satellite images for a given
     label image.
@@ -881,7 +953,9 @@ def sentinel_composite(
         sentinel_bands:
             A list of strings representing the bands to use from the Sentinel 2 data. For available bands run data.list_bands() or see https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_HARMONIZED#bands (Level-1C) and https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#bands (Level-2A). All bands are used if sentinel_bands is None. Defaults to None.
         remove_clouds:
-            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band. Defaults to True.
+            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band. Uses MSK_CLDPRB=0 and MSK_SNWPRB=0 for Level 2A images. Defaults to True.
+        batch_size:
+            An integer representing the number of images to process in parallel. If None, all images are processed at once. Decrease the batch size if you hit computation limits of the Google Earth Engine. A smaller batch_size takes longer to compute. Defaults to None.
 
     Returns:
         A string representing the file path to the composite raster.
@@ -919,6 +993,10 @@ def sentinel_composite(
             raise ValueError(
                 f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
             )
+
+    # Check if batch_size is positive
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer or None")
 
     # Split time window into sub windows and convert to strings
     time_windows = _split_time_window(time_window, num_composites)
@@ -982,16 +1060,25 @@ def sentinel_composite(
         # Filter by roi and timewindow
         s2_window = s2.filterDate(start, end)
 
-        # Remove clouds
-        if remove_clouds:
-            s2_window = s2_window.map(_mask_s2_clouds)
+        if s2_window.size().getInfo() > 0:
+            # Remove clouds
+            if remove_clouds:
+                s2_window = s2_window.map(_mask_s2_clouds)
+                if level_2a:
+                    s2_window = s2_window.map(_mask_level_2a)
+            s2_window = s2_window.map(lambda image: image.divide(10000))
 
-        # Add indices before possibly removing bands necessary for computing indices
-        if indices:
-            s2_window = s2_window.spectralIndices(indices)
+            # Add indices before possibly removing bands necessary for computing indices
+            if indices:
+                s2_window = s2_window.spectralIndices(indices)
 
-        # Select bands
-        s2_window = s2_window.select(bands)
+            # Select bands
+            s2_window = s2_window.select(bands)
+        else:
+            # Handle empty image collection
+            masked_image = ee.Image.constant([0] * len(bands)).rename(bands)
+            masked_image = masked_image.mask(masked_image)
+            s2_window = ee.ImageCollection([masked_image])
 
         # Reduce by temporal_reducers
         reduced_images = []
@@ -1000,6 +1087,7 @@ def sentinel_composite(
             reduced_image = s2_window.reduce(reducer)
 
             band_names = reduced_image.bandNames().getInfo()
+            # TODO: Check if this "if"-statement is for num_composites=1 case
             if len(band_names) == len(bands):
                 band_names = [
                     f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
@@ -1038,7 +1126,7 @@ def sentinel_composite(
 
     # Save data
     print("Computing data...")
-    _save_image(data, data_path_to)
+    _save_image(data, data_path_to, batch_size=batch_size)
 
     return data_path_to
 
