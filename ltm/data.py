@@ -297,7 +297,7 @@ def _save_image(
     # Warn user of GEE quota limits
     if len(band_batches) > 40:
         print(
-            "Warning: Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size."
+            "Warning: Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size to reduce the number of batches."
         )
 
     # Get all image data using gather()
