@@ -132,6 +132,51 @@ def _get_roi_scale_crs(
 
 
 @typechecked
+def _split_reducer_band_name(
+    band_name: str,
+) -> Tuple[str, str]:
+    valid_bands = set(list_bands(level_2a=True))
+    valid_bands = valid_bands.union(set(list_bands(level_2a=False)))
+    valid_bands = valid_bands.union(set(list_indices()))
+
+    parts = band_name.split("_")
+    partial_band = parts[0]
+    band = partial_band if partial_band in valid_bands else ""
+    for part in parts[1:]:
+        partial_band += f"_{part}"
+        if partial_band in valid_bands:
+            band = partial_band
+
+    reducer = band_name[len(band) + 1 :]
+
+    return band, reducer
+
+
+@typechecked
+def _prettify_band_names(image: ee.Image) -> ee.Image:
+    band_names = image.bandNames().getInfo()
+
+    pretty_names = []
+    for band_name in band_names:
+        composite_idx, _, band_reducer = band_name.split("_", 2)
+        band_label, reducer_string = _split_reducer_band_name(band_reducer)
+
+        reducer_parts = reducer_string.split("_")
+        reducer_label = reducer_parts[0]
+        reducer_band = None if len(reducer_parts) == 1 else reducer_parts[1]
+
+        pretty_name = combine_band_name(
+            int(composite_idx) + 1, band_label, reducer_label, reducer_band
+        )
+
+        pretty_names.append(pretty_name)
+
+    image = image.rename(pretty_names)
+
+    return image
+
+
+@typechecked
 async def _fetch(
     url: str,
 ) -> bytes:
@@ -361,34 +406,6 @@ def _path_check(
             raise ValueError(f"{path} does not exist")
 
 
-@typechecked
-def _to_formatted_string(
-    string: str, formatted_strings: List[str], match_largest=False
-) -> str:
-    lower2formatted = {
-        formatted.lower(): formatted for formatted in formatted_strings
-    }
-    if match_largest:
-        # Expects formatted_strings to only use "_" as separator
-        parts = string.lower().split()
-        partial_string = parts[0]
-        formatted = (
-            lower2formatted[partial_string]
-            if partial_string in lower2formatted
-            else ""
-        )
-        for part in parts[1:]:
-            partial_string += f"_{part}"
-            if partial_string in lower2formatted:
-                formatted = lower2formatted[partial_string]
-
-        return formatted
-
-    formatted = lower2formatted[string.lower()]
-
-    return formatted
-
-
 @lru_cache
 @typechecked
 def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
@@ -496,9 +513,8 @@ def list_reducer_bands(reducer: str) -> list[str] | None:
 
     image = ee.Image.constant(0)
     collection = ee.ImageCollection(image)
-    reducer = getattr(ee.Reducer, reducer)()
 
-    reduced = collection.reduce(reducer)
+    reduced = collection.reduce(getattr(ee.Reducer, reducer)())
     band_names = reduced.bandNames().getInfo()
 
     if len(band_names) == 1:
@@ -581,15 +597,18 @@ def combine_band_name(
     Returns:
         A string for the band name.
     """
+    # Check if band is valid
+    if band not in list_bands():
+        raise ValueError(f"Invalid band: {band}")
+
+    # Check if reducer is valid
+    if reducer not in list_reducers():
+        raise ValueError(f"Invalid reducer: {reducer}")
+
     # Create band name
     band_name = f"{composite_idx} {band} {reducer}"
     if reducer_band is not None:
         band_name += f" {reducer_band}"
-
-    # To camel case
-    band_name = band_name.replace("_", " ")
-    title_band_name = band_name.title()
-    band_name = "".join([min(a, b) for a, b in zip(band_name, title_band_name)])
 
     return band_name
 
@@ -604,28 +623,23 @@ def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
     Returns:
         A tuple of the composite index starting at 1, band label and reducer (+ reducer band). The formatting of list_bands(), list_reducers() and list_reducer_bands() is used.
     """
-    # Find composite_idx substring
-    composite_idx, remaining_name = band_name.split(maxsplit=1)
+    # Split band name
+    parts = band_name.split(" ")
+    composite_idx, band, reducer = parts[:3]
+    reducer_band = None if len(parts) == 3 else parts[3]
 
-    # Find band substring
-    bands = list_bands(level_2a=True)
-    bands.extend(list_bands(level_2a=False))
-    bands.extend(list_indices())
-    band = _to_formatted_string(remaining_name, bands, match_largest=True)
+    # Check if band is valid
+    if band not in list_bands():
+        raise ValueError(f"Invalid band: {band}")
 
-    # Find reducer
-    substrings = remaining_name[len(band) + 1 :].split(maxsplit=1)
-    reducer = substrings[0]
-    reducers = list_reducers()
-    reducer = _to_formatted_string(reducer, reducers)
+    # Check if reducer is valid
+    if reducer not in list_reducers():
+        raise ValueError(f"Invalid reducer: {reducer}")
 
-    # Find reducer band
-    if len(substrings) == 1:
-        reducer_band = None
-    else:
-        reducer_band = substrings[1]
-        reducer_bands = list_reducer_bands(reducer)
-        reducer_band = _to_formatted_string(reducer_band, reducer_bands)
+    # Check if reducer band is valid
+    if reducer_band is not None:
+        if reducer_band not in list_reducer_bands(reducer):
+            raise ValueError(f"Invalid reducer band: {reducer_band}")
 
     return int(composite_idx), band, reducer, reducer_band
 
@@ -1065,6 +1079,7 @@ def sentinel_composite(  # pylint: disable=too-many-arguments
             reducer = getattr(ee.Reducer, temporal_reducer)()
             reduced_image = s2_window.reduce(reducer)
 
+            # Format band_names like "B1_kendallsCorrelation_p-value"
             band_names = reduced_image.bandNames().getInfo()
             if len(band_names) == len(bands):
                 band_names = [
@@ -1096,11 +1111,7 @@ def sentinel_composite(  # pylint: disable=too-many-arguments
     data = data.reproject(scale=scale, crs=crs)
 
     # Prettify band names
-    pretty_names = []
-    for band_name in data.bandNames().getInfo():
-        pretty_name = _prettify_band_name(band_name)
-        pretty_names.append(pretty_name)
-    data = data.rename(pretty_names)
+    data = _prettify_band_names(data)
 
     # Save data
     print("Computing data...")

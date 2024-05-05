@@ -128,7 +128,7 @@ def show_timeseries(
     reducer_title = ""
     num_composites = 0
     for band in bands:
-        composite_idx, curr_reducer, _ = split_band_name(band)
+        composite_idx, _, curr_reducer, _ = split_band_name(band)
         if curr_reducer.lower() == reducer.lower():
             reducer_title = curr_reducer
             num_composites = max(num_composites, composite_idx)
@@ -146,8 +146,9 @@ def show_timeseries(
                 if b is None:
                     curr_rgb_bands.append(None)
                 else:
-                    band_lower = combine_band_name(i, reducer, b).lower()
-                    band_lower = band_lower.replace("_", " ")
+                    band_lower = combine_band_name(
+                        i, band=b, reducer=reducer
+                    ).lower()
                     curr_rgb_bands.append(band_lower)
         else:
             curr_rgb_bands = None

@@ -40,6 +40,8 @@ from sklearn.feature_selection import mutual_info_regression
 from tqdm.notebook import tqdm
 from typeguard import typechecked
 
+from ltm.data import split_band_name
+
 
 @typechecked
 def np2pd_like(
@@ -144,7 +146,7 @@ def interpolate_data(
     values = data.values
 
     # Get the number of composites and number of bands
-    num_composites = int(band_names[-1].split()[0])
+    num_composites = split_band_name(band_names[-1])[0]
     num_bands = len(band_names) // num_composites
 
     # Reshape into DataFrame with one row per composite
