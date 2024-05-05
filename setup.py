@@ -19,6 +19,7 @@ setup(
         "ipywidgets",  # for tqdm
         "rasterio",
         "matplotlib",
+        "nest_asyncio",
         "numpy",
         "optuna",
         "pandas",
