@@ -10,6 +10,7 @@ setup(
     author="Peter Hofinger",
     license="MIT",
     install_requires=[
+        "aiohttp",
         "dask[dataframe,distributed]",  # for scikit-elm
         "dill",  # for pickling objects with lambda functions
         "ee",

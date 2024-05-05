@@ -1,14 +1,12 @@
+# mamba activate base
+# mamba remove -n ltm --all
+# mamba clean --all -y
+# mamba create -y -n ltm python=3.10 ipykernel
+# mamba activate ltm
+# pip install -e .
 name: ltm
 channels:
   - defaults
-  - conda-forge
 dependencies:
   - python=3.10
   - ipykernel
-  - seaborn
-  - scikit-elm
-  - scikit-optimize
-  - dill
-  - pip
-  - pip:
-    - -e .
