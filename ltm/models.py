@@ -277,71 +277,6 @@ def _study2model(
 
 
 @typechecked
-def plot_report(  # pylint: disable=too-many-arguments
-    df: pd.DataFrame,
-    title: str | None = None,
-    xlabel: str | None = None,
-    ylabel: str | None = None,
-    label_rotation: int = 0,
-    replace_labels: dict | None = None,
-    categorical_x: bool = True,
-    **kwargs: Any,
-) -> plt.Axes:
-    """Plots a DataFrame with a title, x and y label and legend.
-
-    The index of the DataFrame is used for the x-axis and the columns for the lines in the plot. The legend is placed to the right of the plot.
-
-    Args:
-        df:
-            DataFrame to plot.
-        title:
-            Title of the plot. Defaults to None.
-        xlabel:
-            Label for the x-axis. Defaults to None.
-        ylabel:
-            Label for the y-axis. Defaults to None.
-        label_rotation:
-            Rotation of the x-axis labels. Defaults to 0.
-        replace_labels:
-            Dictionary to replace labels in the legend. Works also for replacing a subset of the labels. Defaults to None.
-        categorical_x:
-            Whether the x-axis is categorial and thus each index is an xtick. Not recommended for very long DataFrames. Defaults to True.
-        **kwargs:
-            Additional keyword arguments to pass to df.plot(), e.g. figsize=(10, 5) or marker="o".
-
-    Returns:
-        Axes of the plot.
-    """
-    # Create empty dictionary if replace is None
-    if replace_labels is None:
-        replace_labels = {}
-
-    # Plot
-    ax = df.plot(**kwargs)
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-
-    # Set xticks
-    if categorical_x:
-        ax.set_xticks(range(len(df)))
-        ax.set_xticklabels(df.index, rotation=label_rotation)
-        ax.xaxis.set_tick_params(which="minor", bottom=False, top=False)
-
-    # Replace labels
-    labels = ax.get_legend_handles_labels()[1]
-    for i, label in enumerate(labels):
-        if label in replace_labels.keys():
-            labels[i] = replace_labels[label]
-
-    # Set legend
-    golden_ratio = (1 + 5**0.5) / 2
-    ax.legend(labels, loc="center left", bbox_to_anchor=(1, 1 / golden_ratio))
-
-    return ax
-
-
-@typechecked
 def bands_from_importance(
     band_importance_path: str,
     level_2a: bool = True,
@@ -389,27 +324,6 @@ def bands_from_importance(
         )
 
     return sentinel_bands, index_bands
-
-
-@typechecked
-def plot2array(fig: plt.Figure | None = None) -> np.ndarray:
-    """Converts a matplotlib figure to a numpy array.
-
-    Args:
-        fig:
-            Matplotlib figure to convert. Defaults to None, which will use the current figure.
-
-    Returns:
-        Numpy array of the figure.
-    """
-    with io.BytesIO() as buff:
-        if fig is None:
-            fig = plt.gcf()
-        fig.savefig(buff, format="png")
-        buff.seek(0)
-        im = plt.imread(buff)
-
-    return im
 
 
 @typechecked
