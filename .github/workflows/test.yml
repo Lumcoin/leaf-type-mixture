@@ -27,7 +27,10 @@ jobs:
       - name: Install dependencies
         run: pip install -e '.[linting]'
       - name: Lint Code
-        run: python -m pylint --disable=line-too-long,too-many-lines,no-member **/*.py
+        run: python -m pylint --disable=line-too-long,too-many-lines,no-member ltm
+      - name: Lint Tests
+        run: pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
+        
   
   unittest:
     name: Unit Tests
