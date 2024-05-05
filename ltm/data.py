@@ -594,14 +594,6 @@ def combine_band_name(
     Returns:
         A string for the band name.
     """
-    # Check if band is valid
-    if band not in list_bands():
-        raise ValueError(f"Invalid band: {band}")
-
-    # Check if reducer is valid
-    if reducer not in list_reducers():
-        raise ValueError(f"Invalid reducer: {reducer}")
-
     # Create band name
     band_name = f"{composite_idx} {band} {reducer}"
     if reducer_band is not None:
@@ -625,19 +617,6 @@ def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
     parts = band_name.split(" ")
     composite_idx, band, reducer = parts[:3]
     reducer_band = None if len(parts) == 3 else parts[3]
-
-    # Check if band is valid
-    if band not in list_bands():
-        raise ValueError(f"Invalid band: {band}")
-
-    # Check if reducer is valid
-    if reducer not in list_reducers():
-        raise ValueError(f"Invalid reducer: {reducer}")
-
-    # Check if reducer band is valid
-    if reducer_band is not None:
-        if reducer_band not in list_reducer_bands(reducer):
-            raise ValueError(f"Invalid reducer band: {reducer_band}")
 
     return int(composite_idx), band, reducer, reducer_band
 
