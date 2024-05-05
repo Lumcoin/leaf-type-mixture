@@ -38,10 +38,7 @@ setup(
             "pylint",
         ],
         "testing": [
-            "dask",
-            "distributed",
             "pytest",
-            "scikit-elm",
         ],
     },
 )

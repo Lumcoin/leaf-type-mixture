@@ -1,4 +1,3 @@
-# pylint: disable=missing-module-docstring
 import unittest
 
 import pandas as pd
@@ -17,10 +16,10 @@ from ltm.models import best_scores
 
 class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
     def setUp(self):
-        (  # pylint: disable=unbalanced-tuple-unpacking
-            self.X,  # pylint: disable=invalid-name
-            self.y,
-        ) = make_regression(n_samples=100, n_features=10, random_state=42)
+        regression = make_regression(
+            n_samples=100, n_features=10, random_state=42
+        )
+        self.data, self.target = regression
         self.search_space = {
             ELMRegressor(): {
                 "alpha": loguniform(1e-8, 1e5),
@@ -40,20 +39,19 @@ class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
         }
         self.refit = "mean_squared_error"
 
-    # def test_hyperparam_search(self):
-    #     results = hyperparam_search(
-    #         self.X,
-    #         self.y,
-    #         self.search_space,
-    #         self.scoring,
-    #         self.refit,
-    #         kfold_from_endmembers=False,
-    #         random_state=42,
-    #     )
-    #     self.assertIsInstance(results, list)
-    #     self.assertEqual(len(results), 1)
-    #     self.assertIsInstance(results[0], RandomizedSearchCV)
-    #     self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
+    def test_hyperparam_search(self):
+        results = hyperparam_search(
+            self.data,
+            self.target,
+            self.search_space,
+            self.scoring,
+            self.refit,
+            random_state=42,
+        )
+        self.assertIsInstance(results, list)
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], RandomizedSearchCV)
+        self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
 
     # def test_reproducible_seed(self):
     #     results1 = hyperparam_search(

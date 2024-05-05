@@ -34,6 +34,7 @@ import json
 import math
 from functools import lru_cache
 from itertools import product
+from numbers import Number
 from pathlib import Path
 from typing import Any, Coroutine, List, Tuple
 
@@ -131,42 +132,6 @@ def _get_roi_scale_crs(
 
 
 @typechecked
-def _split_reducer_band_name(
-    band_name: str,
-    reverse_and_space: bool = False,
-) -> Tuple[str, str]:
-    valid_bands = set(list_bands(level_2a=True))
-    valid_bands = valid_bands.union(set(list_bands(level_2a=False)))
-    valid_bands = valid_bands.union(set(list_indices()))
-
-    if reverse_and_space:
-        parts = band_name.split(" ")
-        partial_band = parts[-1]
-        band = partial_band if partial_band in valid_bands else ""
-        for part in parts[-2::-1]:
-            partial_band = f"{part}_{partial_band}"
-            if partial_band in valid_bands:
-                band = partial_band
-
-        band = band.replace("_", " ")
-        reducer = band_name[: -len(band) - 1]
-
-        return band, reducer
-
-    parts = band_name.split("_")
-    partial_band = parts[0]
-    band = partial_band if partial_band in valid_bands else ""
-    for part in parts[1:]:
-        partial_band += f"_{part}"
-        if partial_band in valid_bands:
-            band = partial_band
-
-    reducer = band_name[len(band) + 1 :]
-
-    return band, reducer
-
-
-@typechecked
 async def _fetch(
     url: str,
 ) -> bytes:
@@ -178,7 +143,7 @@ async def _fetch(
 
 
 @typechecked
-async def wrap_coroutine(
+async def _wrap_coroutine(
     idx: int,
     coroutine: Coroutine,
 ) -> Tuple[int, Any]:
@@ -188,13 +153,13 @@ async def wrap_coroutine(
 
 
 @typechecked
-async def async_gather(
+async def _async_gather(
     *coroutines: Coroutine,
     desc: str | None = None,
 ) -> list[Any]:
     with tqdm(total=len(coroutines), desc=desc) as pbar:
         wrapper = [
-            wrap_coroutine(idx, coroutine)
+            _wrap_coroutine(idx, coroutine)
             for idx, coroutine in enumerate(coroutines)
         ]
         results = [None] * len(coroutines)
@@ -207,12 +172,12 @@ async def async_gather(
 
 
 @typechecked
-def gather(
+def _gather(
     *coroutines: Coroutine,
     desc: str | None = None,
 ) -> list[Any]:
     nest_asyncio.apply()
-    return asyncio.run(async_gather(*coroutines, desc=desc))
+    return asyncio.run(_async_gather(*coroutines, desc=desc))
 
 
 @typechecked
@@ -302,7 +267,7 @@ def _save_image(
 
     # Get all image data using gather()
     coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
-    results = gather(*coroutines, desc="Batches")
+    results = _gather(*coroutines, desc="Batches")
 
     # Combine results
     profile = results[0][0]
@@ -362,24 +327,6 @@ def _mask_level_2a(
 
 
 @typechecked
-def _prettify_band_name(band_name: str) -> str:
-    composite_idx, _, band_reducer = band_name.split("_", 2)
-    band_label, reducer_label = _split_reducer_band_name(band_reducer)
-    band_label = band_label.replace("_", " ")
-    reducer_label = reducer_label.replace("_", " ")
-    composite_idx = int(composite_idx) + 1
-    reducer_label = "".join(
-        [
-            a if a.isupper() else b
-            for a, b in zip(reducer_label, reducer_label.title())
-        ]
-    )
-    pretty_name = f"{composite_idx} {reducer_label} {band_label}"
-
-    return pretty_name
-
-
-@typechecked
 def _compute_area(
     fc: ee.FeatureCollection,
     scale: float,
@@ -414,6 +361,34 @@ def _path_check(
             raise ValueError(f"{path} does not exist")
 
 
+@typechecked
+def _to_formatted_string(
+    string: str, formatted_strings: List[str], match_largest=False
+) -> str:
+    lower2formatted = {
+        formatted.lower(): formatted for formatted in formatted_strings
+    }
+    if match_largest:
+        # Expects formatted_strings to only use "_" as separator
+        parts = string.lower().split()
+        partial_string = parts[0]
+        formatted = (
+            lower2formatted[partial_string]
+            if partial_string in lower2formatted
+            else ""
+        )
+        for part in parts[1:]:
+            partial_string += f"_{part}"
+            if partial_string in lower2formatted:
+                formatted = lower2formatted[partial_string]
+
+        return formatted
+
+    formatted = lower2formatted[string.lower()]
+
+    return formatted
+
+
 @lru_cache
 @typechecked
 def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
@@ -432,6 +407,8 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
             "Or",
             "allNonZero",
             "anyNonZero",
+            "bitwiseAnd",
+            "bitwiseOr",
             "circularMean",
             "circularStddev",
             "circularVariance",
@@ -464,25 +441,72 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
     _initialize_ee()
     print("Checking for valid reducers...")
 
-    # Get all valid reducers
-    ic = ee.ImageCollection([ee.Image.constant(1).toDouble()])
+    # Create dummy image collection and point
+    image = ee.Image.constant(0)
+    collection = ee.ImageCollection(image)
     point = ee.Geometry.Point(0, 0)
-    valid_reducers = []
-    for attr in tqdm(dir(ee.Reducer)):
-        try:
-            reducer = getattr(ee.Reducer, attr)()
-            if isinstance(reducer, ee.Reducer):
-                image = ic.reduce(reducer)
-                result = image.reduceRegion(ee.Reducer.first(), geometry=point)
-                for value in result.getInfo().values():
-                    if value is not None:
-                        float(value)
 
-                valid_reducers.append(attr)
-        except (TypeError, ee.ee_exception.EEException):
+    # Get all valid reducers
+    attrs = dir(ee.Reducer)
+    attrs.pop(attrs.index("reset"))
+    reducers = []
+    for attr in tqdm(attrs):
+        attribute = getattr(ee.Reducer, attr)
+
+        try:
+            # Call without arguments
+            reducer = attribute()
+
+            # Apply reducer to image collection
+            reduced_image = collection.reduce(reducer)
+
+            # Execute computation
+            reduced_point = reduced_image.reduceRegion(
+                ee.Reducer.first(), geometry=point
+            )
+            reduced_point = reduced_point.getInfo()
+        except (TypeError, ee.EEException):
             continue
 
-    return valid_reducers
+        if all(
+            v is None or isinstance(v, Number) for v in reduced_point.values()
+        ):
+            reducers.append(attr)
+
+    return reducers
+
+
+@lru_cache
+@typechecked
+def list_reducer_bands(reducer: str) -> list[str] | None:
+    """Lists all valid bands for a given reducer in the Earth Engine API.
+
+    Examples:
+        list_reducer_bands("mean") -> None
+        list_reducer_bands("kendallsCorrelation") -> ["tau", "p-value"]
+
+    Args:
+        reducer:
+            A string representing the reducer. Run data.list_reducers() for valid reducers.
+
+    Returns:
+        A list of strings representing the valid bands for the given reducer. None if the reducer does not return a multi-band image.
+    """
+    _initialize_ee()
+
+    image = ee.Image.constant(0)
+    collection = ee.ImageCollection(image)
+    reducer = getattr(ee.Reducer, reducer)()
+
+    reduced = collection.reduce(reducer)
+    band_names = reduced.bandNames().getInfo()
+
+    if len(band_names) == 1:
+        return None
+
+    reducer_bands = [band_name.split("_", 1)[1] for band_name in band_names]
+
+    return reducer_bands
 
 
 @lru_cache
@@ -513,7 +537,7 @@ def list_bands(level_2a: bool = True) -> List[str]:
 @lru_cache
 @typechecked
 def list_indices() -> List[str]:
-    """Lists all valid indices for Sentinel-2.
+    """Lists all valid indices for Sentinel-2 offered by eemont.
 
     Returns:
         A list of strings representing the valid indices.
@@ -538,128 +562,72 @@ def list_indices() -> List[str]:
 @typechecked
 def combine_band_name(
     composite_idx: int,
+    band: str,
     reducer: str,
-    band_label: str,
+    reducer_band: str | None = None,
 ) -> str:
-    """Combines a composite index, reducer, and band label into a band name.
+    """Combines a composite index, band label and reducer (+ reducer band) into a band name.
 
     Args:
         composite_idx:
             An integer for the composite index starting at 1.
+        band:
+            A string for the band label in the format used by list_bands().
         reducer:
-            A string for the reducer, possibly containing space characters.
-        band_label:
-            A string for the band label.
+            A string for the reducer in the format used by list_reducers().
+        reducer_band:
+            A string for the reducer band in the format used by list_reducer_bands(). Defaults to None.
 
     Returns:
         A string for the band name.
     """
-    return f"{composite_idx} {reducer} {band_label}"
+    # Create band name
+    band_name = f"{composite_idx} {band} {reducer}"
+    if reducer_band is not None:
+        band_name += f" {reducer_band}"
+
+    # To camel case
+    band_name = band_name.replace("_", " ")
+    title_band_name = band_name.title()
+    band_name = "".join([min(a, b) for a, b in zip(band_name, title_band_name)])
+
+    return band_name
 
 
 @typechecked
-def split_band_name(
-    band_name: str,
-) -> Tuple[int, str, str]:
-    """Splits a band name into its composite index, reducer, and band label.
+def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
+    """Splits a band name into its composite index, band label and reducer (+ reducer band).
 
     Args:
-        A string for the band name.
+        A string for the band name. Expects format of combine_band_name(). Other cases are not handled well.
 
     Returns:
-        A tuple of the composite index starting at 1, reducer (possibly containing space characters), and band label.
+        A tuple of the composite index starting at 1, band label and reducer (+ reducer band). The formatting of list_bands(), list_reducers() and list_reducer_bands() is used.
     """
-    composite_idx, band_name = band_name.split(maxsplit=1)
+    # Find composite_idx substring
+    composite_idx, remaining_name = band_name.split(maxsplit=1)
 
-    band_label, reducer = _split_reducer_band_name(
-        band_name, reverse_and_space=True
-    )
+    # Find band substring
+    bands = list_bands(level_2a=True)
+    bands.extend(list_bands(level_2a=False))
+    bands.extend(list_indices())
+    band = _to_formatted_string(remaining_name, bands, match_largest=True)
 
-    return int(composite_idx), reducer, band_label
+    # Find reducer
+    substrings = remaining_name[len(band) + 1 :].split(maxsplit=1)
+    reducer = substrings[0]
+    reducers = list_reducers()
+    reducer = _to_formatted_string(reducer, reducers)
 
+    # Find reducer band
+    if len(substrings) == 1:
+        reducer_band = None
+    else:
+        reducer_band = substrings[1]
+        reducer_bands = list_reducer_bands(reducer)
+        reducer_band = _to_formatted_string(reducer_band, reducer_bands)
 
-@typechecked
-def show_timeseries(
-    raster_path: str,
-    reducer: str,
-    rgb_bands: List[str] | None = None,
-) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
-    # Read raster and get band names
-    with rasterio.open(raster_path) as src:
-        raster = src.read()
-        bands = src.descriptions
-        bands_lower = [band.lower() for band in bands]
-
-    # Check if rgb_bands has length of three or is None
-    if rgb_bands is not None and len(rgb_bands) != 3:
-        raise ValueError("rgb_bands must be a list of length 3 or None")
-
-    # Fill rgb_bands with bands and maybe None if it is None
-    if rgb_bands is None:
-        if len(bands) == 1:
-            rgb_bands = [bands[0]] * 3
-        elif len(bands) == 2:
-            rgb_bands = [bands[0], bands[1], None]
-        else:
-            rgb_bands = list(bands[:3])
-
-        for i, rgb_band in enumerate(rgb_bands):
-            if rgb_band is not None:
-                _, _, rgb_bands[i] = split_band_name(rgb_bands[i])
-
-    # Find the number of composites and the reducer title
-    reducer_title = ""
-    num_composites = 0
-    for band in bands:
-        composite_idx, curr_reducer, _ = split_band_name(band)
-        if curr_reducer.lower() == reducer.lower():
-            reducer_title = curr_reducer
-            num_composites = max(num_composites, composite_idx)
-
-    if num_composites == 0:
-        raise ValueError(f"No bands found with reducer {reducer}")
-
-    # Get the rasters for the rgb bands
-    rgb_rasters = []
-    for i in range(1, num_composites + 1):
-        rgb_raster = []
-        for b in rgb_bands:
-            if b is not None:
-                raster_band = combine_band_name(i, reducer, b).lower()
-                raster_band = raster_band.replace("_", " ")
-                band_raster = raster[bands_lower.index(raster_band)]
-            else:
-                band_raster = np.zeros_like(raster[0])
-
-            rgb_raster.append(band_raster)
-
-        rgb_raster = np.stack(rgb_raster)
-        rgb_raster = rgb_raster.transpose(1, 2, 0)
-        rgb_rasters.append(rgb_raster)
-
-    # Get min and max values for normalization
-    min_value = min(np.nanmin(rgb_raster) for rgb_raster in rgb_rasters)
-    max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
-
-    # Plot the rasters below each other
-    fig, axs = plt.subplots(nrows=num_composites, figsize=(10, 10))
-    if num_composites == 1:
-        axs = np.array([axs])
-    fig.tight_layout()
-    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
-        # normalize values and apply gamma correction
-        rgb_raster -= min_value
-        rgb_raster /= max_value - min_value
-        rgb_raster **= 1 / 2.2
-        rgb_raster[np.isnan(rgb_raster)] = 0
-        ax.imshow(rgb_raster)
-        ax.set_title(f"{i} {reducer_title}")
-        ax.axis("off")
-
-    # Show the plot
-    plt.show()
-
-    return fig, axs
+    return int(composite_idx), band, reducer, reducer_band
 
 
 @typechecked
@@ -853,20 +821,31 @@ def compute_label(
 
 @typechecked
 def shapefile2raster(
-    target_path: str,
     shapefile_path: str,
+    raster_path: str,
 ) -> str:
+    """Creates a raster mask from a shapefile.
+
+    Args:
+        shapefile_path:
+            A string representing the file path to the shapefile.
+        raster_path:
+            A string representing the file path to save the raster mask. All cells partially or fully inside the shapefile will be 1 and all cells outside the shapefile will be NaN.
+
+    Returns:
+        The file path to the raster mask as a string.
+    """
     # Initialize Earth Engine API
     _initialize_ee()
     print("Preparing labels...")
 
     # Ensure proper path format
-    target_pathlib = Path(target_path)
-    if target_pathlib.suffix != ".tif":
+    raster_pathlib = Path(raster_path)
+    if raster_pathlib.suffix != ".tif":
         raise ValueError("target_path must be a string ending in .tif")
-    if not target_pathlib.parent.exists():
+    if not raster_pathlib.parent.exists():
         raise ValueError(
-            f"target_path parent directory does not exist: {target_pathlib.parent}"
+            f"target_path parent directory does not exist: {raster_pathlib.parent}"
         )
 
     # Load shapefile
@@ -912,13 +891,13 @@ def shapefile2raster(
 
     # Save target
     print("Computing image...")
-    _save_image(target, target_path)
+    _save_image(target, raster_path)
 
-    return target_path
+    return raster_path
 
 
 @typechecked
-def sentinel_composite(
+def sentinel_composite(  # pylint: disable=too-many-arguments
     target_path_from: str,
     data_path_to: str,
     time_window: Tuple[datetime.date, datetime.date],
@@ -1087,14 +1066,13 @@ def sentinel_composite(
             reduced_image = s2_window.reduce(reducer)
 
             band_names = reduced_image.bandNames().getInfo()
-            # TODO: Check if this "if"-statement is for num_composites=1 case
             if len(band_names) == len(bands):
                 band_names = [
                     f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
                     for band_name in reduced_image.bandNames().getInfo()
                 ]
             else:
-                # Rename bands and remove temporal_reducer from band name
+                # Handle reducers like kendallsCorrelation with multiple outputs
                 new_band_names = []
                 for band_name in band_names:
                     band, reducer_label = _split_reducer_band_name(band_name)

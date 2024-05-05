@@ -65,21 +65,14 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from tqdm.notebook import tqdm
 from typeguard import typechecked
 
-from ltm.data import (
-    BROADLEAF_AREA,
-    CONIFER_AREA,
-    CONIFER_PROPORTION,
-    list_bands,
-    list_indices,
-)
+from ltm.data import BROADLEAF_AREA, CONIFER_AREA, list_bands, list_indices
 from ltm.features import drop_nan_rows, load_raster, np2pd_like
 
 
 @typechecked
-class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
+class EndMemberSplitter(BaseCrossValidator):
     """K-fold splitter that only uses end members for training.
 
     End members are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental.
@@ -112,10 +105,36 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
             n_splits=n_splits, shuffle=shuffle, random_state=random_state
         )
 
+    def _iter_test_indices(
+        self,
+        X: npt.ArrayLike | None = None,
+        y: npt.ArrayLike | None = None,
+        groups: np.ndarray | None = None,
+    ) -> Iterator[np.ndarray]:
+        """Generates integer indices corresponding to test sets.
+
+        Args:
+            X:
+                Data to split.
+            y:
+                Labels to split.
+            groups:
+                Group labels to split.
+
+        Yields:
+            Integer indices corresponding to test sets.
+        """
+        fun = self.k_fold._iter_test_indices  # pylint: disable=protected-access
+        for test in fun(X, y, groups):
+            if y is not None:
+                indices = np.where((y[test] == 0) | (y[test] == 1))[0]
+                test = test[indices]
+            yield test
+
     def split(
         self,
         X: npt.ArrayLike,
-        y: npt.ArrayLike,
+        y: npt.ArrayLike | None = None,
         groups: np.ndarray | None = None,
     ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
         """Generates indices to split data into training and test set.
@@ -169,16 +188,13 @@ class EndMemberSplitter(BaseCrossValidator):  # pylint: disable=abstract-method
 
 @typechecked
 def _target2raster(
-    target: np.ndarray | pd.Series | pd.DataFrame,
+    target: pd.Series | pd.DataFrame,
     indices: np.ndarray,
     plot_shape: Tuple[int, int, int],
     area2mixture: bool = False,
 ) -> np.ndarray:
-    if isinstance(target, np.ndarray):
-        target_values = target
-    else:
-        target_values = target.values
-
+    # Create target values array of shape (n_samples, n_features)
+    target_values = target.values
     if len(target_values.shape) == 1:
         target_values = np.expand_dims(target_values, axis=1)
 
@@ -207,6 +223,15 @@ def _target2raster(
 def has_nan_error(
     estimator: BaseEstimator,
 ) -> bool:
+    """Checks if an estimator raises a ValueError when predicting with NaN values.
+
+    Args:
+        estimator:
+            BaseEstimator to check for NaN error.
+
+    Returns:
+        If true the estimator raises a ValueError when predicting with NaN values.
+    """
     try:
         estimator.fit([[0]], [0])
         estimator.predict([[np.nan]])
@@ -252,7 +277,7 @@ def _study2model(
 
 
 @typechecked
-def plot_report(
+def plot_report(  # pylint: disable=too-many-arguments
     df: pd.DataFrame,
     title: str | None = None,
     xlabel: str | None = None,
@@ -367,75 +392,6 @@ def bands_from_importance(
 
 
 @typechecked
-def raster2rgb(
-    raster: np.ndarray,
-    bands: Tuple[str, ...] | None = None,
-    rgb_bands: List[str | None] | None = None,
-    mask_nan: bool = True,
-) -> np.ndarray:
-    """Creates an RGB image from a rasterio raster.
-
-    Args:
-        raster:
-            Rasterio raster to convert to RGB.
-        bands:
-            Tuple of band names. Must not be None if rgb_bands is not None. Defaults to None.
-        rgb_bands:
-            A list of strings representing the band names to use for the RGB image. Defaults to the first three bands if None. Except for when there is only one band, then the RGB image will be grayscale. Or for two bands only R and G will be used. You get the idea. I had to do something for default.
-        mask_nan:
-            A boolean whether to mask NaN values. If any band has a NaN value, the whole pixel will be masked. Defaults to True.
-
-    Returns:
-        A NumPy array RGB image.
-    """
-    # Check whether bands exists if rgb_bands is not None
-    if rgb_bands is not None and bands is None:
-        raise ValueError("bands must not be None if rgb_bands is not None")
-
-    # Check if bands is equal to the number of bands in raster
-    if bands is not None and len(bands) != raster.shape[0]:
-        raise ValueError(
-            f"bands must have same length as number of bands in raster: {len(bands)} != {raster.shape[0]}"
-        )
-
-    # Default bands to tuple of integers if None
-    if bands is None:
-        bands = tuple(str(number) for number in range(raster.shape[0]))
-
-    # Check if rgb_bands has length of three or is None
-    if rgb_bands is not None and len(rgb_bands) != 3:
-        raise ValueError("rgb_bands must be a list of length 3 or None")
-
-    # Fill rgb_bands with bands and maybe None if it is None
-    if rgb_bands is None:
-        if len(bands) == 1:
-            rgb_bands = [bands[0]] * 3
-        elif len(bands) == 2:
-            rgb_bands = [bands[0], bands[1], None]
-        else:
-            rgb_bands = list(bands[:3])
-
-    # Create RGB image bands
-    rgb_plot = []
-    for rgb_band in rgb_bands:
-        if rgb_band is not None:
-            idx = bands.index(rgb_band)
-            rgb_plot.append(raster[idx])
-        else:
-            rgb_plot.append(np.zeros_like(raster[0, :, :]))
-
-    # Stack RGB image bands
-    rgb_plot = np.dstack(rgb_plot)
-
-    # Mask NaN values
-    if mask_nan:
-        nan_mask = np.any(np.isnan(raster), axis=0)
-        rgb_plot[nan_mask] = np.nan
-
-    return rgb_plot
-
-
-@typechecked
 def plot2array(fig: plt.Figure | None = None) -> np.ndarray:
     """Converts a matplotlib figure to a numpy array.
 
@@ -468,7 +424,7 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     Returns:
         Scorer with modified score function.
     """
-    score_func = scorer._score_func
+    score_func = scorer._score_func  # pylint: disable=protected-access
 
     def mixture_score_func(
         target_true: npt.ArrayLike,
@@ -490,7 +446,7 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
-    scorer._score_func = mixture_score_func
+    scorer._score_func = mixture_score_func  # pylint: disable=protected-access
 
     return scorer
 
@@ -529,7 +485,7 @@ def best_scores(
             )[0][0]
             df_dict[metric_name].append(
                 result.cv_results_["mean_test_" + metric_name][best_index]
-                * scorer._sign
+                * scorer._sign  # pylint: disable=protected-access
             )
 
     # Create a new dataframe with the scores
@@ -539,7 +495,7 @@ def best_scores(
 
 
 @typechecked
-def hyperparam_search(
+def hyperparam_search(  # pylint: disable=too-many-arguments
     model: BaseEstimator,
     search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
     data: npt.ArrayLike,
@@ -605,9 +561,10 @@ def hyperparam_search(
                 study = dill.load(file)
 
             return best_model, study
-        elif study_path.exists():
+
+        if study_path.exists():
             # Inform user
-            print(f"Creating model from study file...")
+            print("Creating model from study file...")
 
             # Load the study and create the best model
             with open(study_path, "rb") as file:
@@ -619,7 +576,8 @@ def hyperparam_search(
                 dill.dump(best_model, file)
 
             return best_model, study
-        elif model_path.exists():
+
+        if model_path.exists():
             # Raise error if model file exists but study file is missing
             raise ValueError(
                 f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
@@ -629,7 +587,7 @@ def hyperparam_search(
             "Warning: use_caching=True but save_folder=None, caching is disabled."
         )
 
-    def callback(study, trial):
+    def callback(study, _):
         # Save intermediate study
         if use_caching and save_folder is not None:
             with open(cache_path, "wb") as file:

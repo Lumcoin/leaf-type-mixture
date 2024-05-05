@@ -27,7 +27,14 @@ This repository uses the [Google Python Style Guide](https://google.github.io/st
 Check code quality using pylint:
 ```bash
 pip install pylint
-pylint --disable=line-too-long,too-many-lines,no-member **/*.py
+pylint --disable=line-too-long,too-many-lines,no-member ltm
+pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
+```
+
+Run tests using pytest:
+```bash
+pip install pytest
+pytest
 ```
 
 Check test coverage using coverage.py:
