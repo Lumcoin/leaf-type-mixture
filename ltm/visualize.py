@@ -102,6 +102,38 @@ def _raster2rgb(
 
 
 @typechecked
+def _plot_timeseries(
+    rgb_rasters: List[np.ndarray],
+    reducer_title: str,
+) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
+    # Get num_composites
+    num_composites = len(rgb_rasters)
+
+    # Get min and max values for normalization
+    min_value = min(np.nanmin(rgb_raster) for rgb_raster in rgb_rasters)
+    max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
+
+    # Plot the rasters below each other
+    fig, axs = plt.subplots(nrows=num_composites, figsize=(10, 10))
+    if num_composites == 1:
+        axs = np.array([axs])
+    fig.tight_layout()
+    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
+        # normalize values and apply gamma correction
+        rgb_raster -= min_value
+        rgb_raster /= max_value - min_value
+        rgb_raster **= 1 / 2.2
+        rgb_raster[np.isnan(rgb_raster)] = 0
+        ax.imshow(rgb_raster)
+        ax.set_title(f"{i} {reducer_title}")
+        ax.axis("off")
+
+    plt.show()
+
+    return fig, axs
+
+
+@typechecked
 def show_timeseries(
     raster_path: str,
     reducer: str,
@@ -124,16 +156,15 @@ def show_timeseries(
     with rasterio.open(raster_path) as src:
         raster = src.read()
         bands = src.descriptions
-        bands_lower = [band.lower() for band in bands]
 
     # Find the reducer title and the number of composites
-    reducer_title = ""
     num_composites = 0
     for band in bands:
         composite_idx, _, curr_reducer, _ = split_band_name(band)
         if curr_reducer.lower() == reducer.lower():
-            reducer_title = curr_reducer
+            reducer = curr_reducer
             num_composites = max(num_composites, composite_idx)
+    bands = [band.lower() for band in bands]
 
     if num_composites == 0:
         raise ValueError(f"No bands found with reducer {reducer}")
@@ -144,43 +175,22 @@ def show_timeseries(
         rgb_raster = []
         if rgb_bands is not None:
             curr_rgb_bands = []
-            for b in rgb_bands:
-                if b is None:
+            for band in rgb_bands:
+                if band is None:
                     curr_rgb_bands.append(None)
                 else:
                     band_lower = combine_band_name(
-                        i, band=b, reducer=reducer
+                        i, band=band, reducer=reducer
                     ).lower()
                     curr_rgb_bands.append(band_lower)
         else:
             curr_rgb_bands = None
 
-        rgb_raster = _raster2rgb(raster, tuple(bands_lower), curr_rgb_bands)
+        rgb_raster = _raster2rgb(raster, tuple(bands), curr_rgb_bands)
         rgb_rasters.append(rgb_raster)
 
-    # Get min and max values for normalization
-    min_value = min(np.nanmin(rgb_raster) for rgb_raster in rgb_rasters)
-    max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
-
-    # Plot the rasters below each other
-    fig, axs = plt.subplots(nrows=num_composites, figsize=(10, 10))
-    if num_composites == 1:
-        axs = np.array([axs])
-    fig.tight_layout()
-    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
-        # normalize values and apply gamma correction
-        rgb_raster -= min_value
-        rgb_raster /= max_value - min_value
-        rgb_raster **= 1 / 2.2
-        rgb_raster[np.isnan(rgb_raster)] = 0
-        ax.imshow(rgb_raster)
-        ax.set_title(f"{i} {reducer_title}")
-        ax.axis("off")
-
-    # Show the plot
-    plt.show()
-
-    return fig, axs
+    # Plot the rasters
+    return _plot_timeseries(rgb_rasters, reducer)
 
 
 @typechecked

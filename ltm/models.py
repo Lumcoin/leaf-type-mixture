@@ -3,7 +3,7 @@ model.
 
 Searches for the best hyperparameters for multiple models using randomized search The search results can be used to compare the performance of different models. The model performance can be compared visually using cv_predict().
 
-Typical usage example: TODO
+Typical usage example:
 
     from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
     from sklearn.metrics import make_scorer, mean_absolute_error, mean_squared_error
@@ -40,13 +40,11 @@ Typical usage example: TODO
     )
 """
 
-import io
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 import dill
-import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 import optuna

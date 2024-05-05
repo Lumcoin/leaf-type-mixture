@@ -65,6 +65,97 @@ def _initialize_ee() -> None:
 
 
 @typechecked
+def _sc_check_args(
+    *args: Any,
+) -> None:
+    # Unpack arguments
+    (
+        target_path_from,
+        data_path_to,
+        time_window,
+        num_composites,
+        temporal_reducers,
+        indices,
+        level_2a,
+        sentinel_bands,
+        _,
+        batch_size,
+    ) = args
+
+    # Ensure proper time windows
+    if round(time_window[0].timestamp() * 1000) >= round(
+        time_window[1].timestamp() * 1000
+    ):
+        raise ValueError(
+            f"start ({time_window[0]}) must be before the end ({time_window[1]}) of timewindow"
+        )
+    if level_2a and time_window[0] < datetime.datetime(2017, 3, 28):
+        if time_window[0] >= datetime.datetime(2015, 6, 27):
+            raise ValueError(
+                "Level-2A data is not available before 2017-03-28. Use Level-1C data instead."
+            )
+        raise ValueError("Level-2A data is not available before 2017-03-28.")
+    if not level_2a and time_window[0] < datetime.datetime(2015, 6, 27):
+        raise ValueError("Level-1C data is not available before 2015-06-27.")
+
+    # Ensure proper path format
+    _path_check(target_path_from, data_path_to, suffix=".tif")
+
+    # Check if indices are valid eemont indices
+    if indices is not None:
+        valid_indices = list_indices()
+        invalid_indices = [
+            index for index in indices if index not in valid_indices
+        ]
+        if invalid_indices:
+            raise ValueError(
+                f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
+            )
+
+    # Check if batch_size is positive
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer or None")
+
+    # Use ee.Reducer.mean() if temporal_reducers is None
+    if temporal_reducers is None:
+        temporal_reducers = ["mean"]
+    if len(set(temporal_reducers)) < len(temporal_reducers):
+        raise ValueError(
+            "temporal_reducers must not contain duplicate reducers"
+        )
+
+    # Check if all reducers are valid
+    valid_reducers = list_reducers()
+    invalid_reducers = [
+        reducer
+        for reducer in temporal_reducers
+        if reducer not in valid_reducers
+    ]
+    if invalid_reducers:
+        raise ValueError(
+            f"Invalid reducers not in ee.Reducer: {', '.join(invalid_reducers)}"
+        )
+
+    # Check if all bands are valid. Use all bands if sentinel_bands is None
+    valid_bands = list_bands(level_2a)
+    if sentinel_bands is None:
+        sentinel_bands = valid_bands
+    illegal_bands = [b for b in sentinel_bands if b not in valid_bands]
+    if any(illegal_bands):
+        raise ValueError(f"{illegal_bands} not available in: {valid_bands}")
+
+    # Check if the limit of 5000 bands is exceeded
+    indices = indices if indices is not None else []
+    if (
+        len(sentinel_bands + indices) * len(temporal_reducers) * num_composites
+        > 5000
+    ):
+        raise ValueError(
+            f"You exceed the 5000 bands max limit of GEE: {len(sentinel_bands + indices) * len(temporal_reducers) * num_composites} bands"
+        )
+
+
+@typechecked
 def _sentinel_crs(
     latitude: float,
     longitude: float,
@@ -400,6 +491,72 @@ def _path_check(
             raise ValueError(f"{path} parent directory does not exist")
         if check_self and not pathlib.exists():
             raise ValueError(f"{path} does not exist")
+
+
+@typechecked
+def _compute_time_window(
+    time_window: Tuple[int, int],
+    s2: ee.ImageCollection,
+    bands: List[str],
+    temporal_reducers: List[str],
+    indices: List[str] | None,
+    level_2a: bool,
+    remove_clouds: bool,
+) -> ee.Image:
+    # Filter by roi and timewindow
+    start, end = time_window
+    s2_window = s2.filterDate(start, end)
+
+    if s2_window.size().getInfo() > 0:
+        # Remove clouds
+        if remove_clouds:
+            s2_window = s2_window.map(_mask_s2_clouds)
+            if level_2a:
+                s2_window = s2_window.map(_mask_level_2a)
+        s2_window = s2_window.map(lambda image: image.divide(10000))
+
+        # Add indices before possibly removing bands necessary for computing indices
+        if indices:
+            s2_window = s2_window.spectralIndices(indices)
+
+        # Select bands
+        s2_window = s2_window.select(bands)
+    else:
+        # Handle empty image collection
+        masked_image = ee.Image.constant([0] * len(bands)).rename(bands)
+        masked_image = masked_image.mask(masked_image)
+        s2_window = ee.ImageCollection([masked_image])
+
+    # Reduce by temporal_reducers
+    reduced_images = []
+    for temporal_reducer in temporal_reducers:
+        reducer = getattr(ee.Reducer, temporal_reducer)()
+        reduced_image = s2_window.reduce(reducer)
+
+        # Format band_names like "B1_kendallsCorrelation_p-value"
+        band_names = reduced_image.bandNames().getInfo()
+        if len(band_names) == len(bands):
+            band_names = [
+                f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
+                for band_name in reduced_image.bandNames().getInfo()
+            ]
+        else:
+            # Handle reducers like kendallsCorrelation with multiple outputs
+            new_band_names = []
+            for band_name in band_names:
+                band, reducer_label = _split_reducer_band_name(band_name)
+                new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
+                new_band_names.append(new_band_name)
+            band_names = new_band_names
+
+        reduced_image = reduced_image.rename(band_names)
+
+        reduced_images.append(reduced_image)
+
+    # Combine reduced_images into one image
+    datum = ee.ImageCollection(reduced_images).toBands()
+
+    return datum
 
 
 @lru_cache
@@ -871,85 +1028,25 @@ def sentinel_composite(  # pylint: disable=too-many-arguments
     _initialize_ee()
     print("Preparing Sentinel-2 data...")
 
-    # Ensure proper time windows
-    if round(time_window[0].timestamp() * 1000) >= round(
-        time_window[1].timestamp() * 1000
-    ):
-        raise ValueError(
-            f"start ({time_window[0]}) must be before the end ({time_window[1]}) of timewindow"
-        )
-    if level_2a and time_window[0] < datetime.datetime(2017, 3, 28):
-        if time_window[0] >= datetime.datetime(2015, 6, 27):
-            raise ValueError(
-                "Level-2A data is not available before 2017-03-28. Use Level-1C data instead."
-            )
-        raise ValueError("Level-2A data is not available before 2017-03-28.")
-    if not level_2a and time_window[0] < datetime.datetime(2015, 6, 27):
-        raise ValueError("Level-1C data is not available before 2015-06-27.")
-
-    # Ensure proper path format
-    _path_check(target_path_from, data_path_to, suffix=".tif")
-
-    # Check if indices are valid eemont indices
-    if indices is not None:
-        valid_indices = list_indices()
-        invalid_indices = [
-            index for index in indices if index not in valid_indices
-        ]
-        if invalid_indices:
-            raise ValueError(
-                f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
-            )
-
-    # Check if batch_size is positive
-    if batch_size is not None and batch_size <= 0:
-        raise ValueError("batch_size must be a positive integer or None")
-
-    # Split time window into sub windows and convert to strings
-    time_windows = _split_time_window(time_window, num_composites)
-    time_windows = [
-        (round(start.timestamp() * 1000), round(end.timestamp() * 1000))
-        for start, end in time_windows
+    # Check arguments
+    args = [
+        target_path_from,
+        data_path_to,
+        time_window,
+        num_composites,
+        temporal_reducers,
+        indices,
+        level_2a,
+        sentinel_bands,
+        remove_clouds,
+        batch_size,
     ]
-
-    # Use ee.Reducer.mean() if temporal_reducers is None
-    if temporal_reducers is None:
-        temporal_reducers = ["mean"]
-    if len(set(temporal_reducers)) < len(temporal_reducers):
-        raise ValueError(
-            "temporal_reducers must not contain duplicate reducers"
-        )
-
-    # Check if all reducers are valid
-    valid_reducers = list_reducers()
-    invalid_reducers = [
-        reducer
-        for reducer in temporal_reducers
-        if reducer not in valid_reducers
-    ]
-    if invalid_reducers:
-        raise ValueError(
-            f"Invalid reducers not in ee.Reducer: {', '.join(invalid_reducers)}"
-        )
-
-    # Check if all bands are valid. Use all bands if sentinel_bands is None
-    valid_bands = list_bands(level_2a)
-    if sentinel_bands is None:
-        sentinel_bands = valid_bands
-    illegal_bands = [b for b in sentinel_bands if b not in valid_bands]
-    if any(illegal_bands):
-        raise ValueError(f"{illegal_bands} not available in: {valid_bands}")
+    _sc_check_args(*args)
 
     # Combine sentinel_bands and indices
     bands = sentinel_bands.copy()
     if indices is not None:
         bands += indices
-
-    # Check if the limit of 5000 bands is exceeded
-    if len(bands) * len(temporal_reducers) > 5000:
-        raise ValueError(
-            f"You exceed the 5000 bands max limit of GEE: {len(bands) * len(temporal_reducers)} bands"
-        )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(target_path_from)
@@ -961,60 +1058,25 @@ def sentinel_composite(  # pylint: disable=too-many-arguments
         s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
     s2 = s2.filterBounds(roi)
 
-    # Loop through time windows
+    # Split time window into sub windows and convert to strings
+    time_windows = _split_time_window(time_window, num_composites)
+    time_windows = [
+        (round(start.timestamp() * 1000), round(end.timestamp() * 1000))
+        for start, end in time_windows
+    ]
+
+    # Compute composite for each time windows
     data = []
-    for start, end in time_windows:
-        # Filter by roi and timewindow
-        s2_window = s2.filterDate(start, end)
-
-        if s2_window.size().getInfo() > 0:
-            # Remove clouds
-            if remove_clouds:
-                s2_window = s2_window.map(_mask_s2_clouds)
-                if level_2a:
-                    s2_window = s2_window.map(_mask_level_2a)
-            s2_window = s2_window.map(lambda image: image.divide(10000))
-
-            # Add indices before possibly removing bands necessary for computing indices
-            if indices:
-                s2_window = s2_window.spectralIndices(indices)
-
-            # Select bands
-            s2_window = s2_window.select(bands)
-        else:
-            # Handle empty image collection
-            masked_image = ee.Image.constant([0] * len(bands)).rename(bands)
-            masked_image = masked_image.mask(masked_image)
-            s2_window = ee.ImageCollection([masked_image])
-
-        # Reduce by temporal_reducers
-        reduced_images = []
-        for temporal_reducer in temporal_reducers:
-            reducer = getattr(ee.Reducer, temporal_reducer)()
-            reduced_image = s2_window.reduce(reducer)
-
-            # Format band_names like "B1_kendallsCorrelation_p-value"
-            band_names = reduced_image.bandNames().getInfo()
-            if len(band_names) == len(bands):
-                band_names = [
-                    f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
-                    for band_name in reduced_image.bandNames().getInfo()
-                ]
-            else:
-                # Handle reducers like kendallsCorrelation with multiple outputs
-                new_band_names = []
-                for band_name in band_names:
-                    band, reducer_label = _split_reducer_band_name(band_name)
-                    new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
-                    new_band_names.append(new_band_name)
-                band_names = new_band_names
-
-            reduced_image = reduced_image.rename(band_names)
-
-            reduced_images.append(reduced_image)
-
-        # Combine reduced_images into one image
-        datum = ee.ImageCollection(reduced_images).toBands()
+    for time_window in time_windows:
+        datum = _compute_time_window(
+            time_window,
+            s2,
+            bands,
+            temporal_reducers,
+            indices,
+            level_2a,
+            remove_clouds,
+        )
 
         # Add to data
         data.append(datum)
