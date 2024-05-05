@@ -223,7 +223,8 @@ def _target2raster(
 def has_nan_error(
     estimator: BaseEstimator,
 ) -> bool:
-    """Checks if an estimator raises a ValueError when predicting with NaN values.
+    """Checks if an estimator raises a ValueError when predicting with NaN
+    values.
 
     Args:
         estimator:

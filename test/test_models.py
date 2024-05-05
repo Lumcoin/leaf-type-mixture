@@ -1,97 +1,75 @@
 import unittest
 
-import pandas as pd
-from scipy.stats import loguniform, uniform
+from optuna import Study
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
-from sklearn.metrics import (
-    make_scorer,
-    mean_squared_error,
-    median_absolute_error,
-)
-from sklearn.model_selection import RandomizedSearchCV
+from sklearn.metrics import make_scorer, root_mean_squared_error
+from sklearn.pipeline import Pipeline
 
-from ltm.models import best_scores
+from ltm.models import hyperparam_search
 
 
-class TestModels(unittest.TestCase):  # pylint: disable=missing-class-docstring
+class TestModels(unittest.TestCase):
     def setUp(self):
         regression = make_regression(
             n_samples=100, n_features=10, random_state=42
         )
         self.data, self.target = regression
-        self.search_space = {
-            ELMRegressor(): {
-                "alpha": loguniform(1e-8, 1e5),
-                "include_original_features": [True, False],
-                "n_neurons": loguniform(1, 100 - 1),
-                "ufunc": ["tanh", "sigm", "relu", "lin"],
-                "density": uniform(0.01, 0.99),
-            },
-        }
-        self.scoring = {
-            "median_absolute_error": make_scorer(
-                median_absolute_error, greater_is_better=False
-            ),
-            "mean_squared_error": make_scorer(
-                mean_squared_error, greater_is_better=False
-            ),
-        }
+
+        def suggest_float(*args, **kwargs):
+            return "suggest_float", args, kwargs
+
+        def suggest_categorical(*args, **kwargs):
+            return "suggest_categorical", args, kwargs
+
+        self.model = ELMRegressor(random_state=42)
+        self.search_space = [
+            suggest_float("alpha", 1e-8, 1e5, log=True),
+            suggest_categorical("include_original_features", [True, False]),
+            suggest_float("n_neurons", 1, 1000),
+            suggest_categorical("ufunc", ["tanh", "sigm", "relu", "lin"]),
+            suggest_float("density", 0.01, 0.99),
+        ]
+        self.scorer = make_scorer(
+            root_mean_squared_error, greater_is_better=False
+        )
         self.refit = "mean_squared_error"
 
     def test_hyperparam_search(self):
-        results = hyperparam_search(
+        elm_model, elm_study = hyperparam_search(
+            self.model,
+            self.search_space,
             self.data,
             self.target,
-            self.search_space,
-            self.scoring,
-            self.refit,
+            self.scorer,
+            n_trials=1,
             random_state=42,
         )
-        self.assertIsInstance(results, list)
-        self.assertEqual(len(results), 1)
-        self.assertIsInstance(results[0], RandomizedSearchCV)
-        self.assertIsInstance(results[0].best_estimator_, ELMRegressor)
+        self.assertIsInstance(elm_model, Pipeline)
+        self.assertIsInstance(elm_study, Study)
+        self.assertIsInstance(elm_study.best_params, dict)
+        self.assertLess(elm_study.best_value, -0.5)
 
-    # def test_reproducible_seed(self):
-    #     results1 = hyperparam_search(
-    #         self.X,
-    #         self.y,
-    #         self.search_space,
-    #         self.scoring,
-    #         self.refit,
-    #         kfold_from_endmembers=False,
-    #         random_state=42,
-    #     )
-    #     results2 = hyperparam_search(
-    #         self.X,
-    #         self.y,
-    #         self.search_space,
-    #         self.scoring,
-    #         self.refit,
-    #         kfold_from_endmembers=False,
-    #         random_state=42,
-    #     )
-    #     self.assertEqual(
-    #         results1[0].best_estimator_.get_params(),
-    #         results2[0].best_estimator_.get_params(),
-    #     )
-
-    # def test_best_scores(self):
-    #     results = hyperparam_search(
-    #         self.X,
-    #         self.y,
-    #         self.search_space,
-    #         self.scoring,
-    #         self.refit,
-    #         kfold_from_endmembers=False,
-    #         random_state=42,
-    #     )
-    #     scores = best_scores(results, self.scoring)
-    #     self.assertIsInstance(scores, pd.DataFrame)
-    #     self.assertEqual(len(scores.columns), 2)
-    #     self.assertIn("mean_squared_error", scores)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_reproducible_seed(self):
+        elm_model1, elm_study1 = hyperparam_search(
+            self.model,
+            self.search_space,
+            self.data,
+            self.target,
+            self.scorer,
+            n_trials=1,
+            random_state=42,
+        )
+        elm_model2, elm_study2 = hyperparam_search(
+            self.model,
+            self.search_space,
+            self.data,
+            self.target,
+            self.scorer,
+            n_trials=1,
+            random_state=42,
+        )
+        self.assertEqual(elm_study1.best_params, elm_study2.best_params)
+        self.assertEqual(
+            elm_model1[-1].get_params(), elm_model2[-1].get_params()
+        )

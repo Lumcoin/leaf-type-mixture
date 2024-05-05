@@ -30,8 +30,6 @@ Typical usage example:
 
 import asyncio
 import datetime
-import json
-import math
 from functools import lru_cache
 from itertools import product
 from numbers import Number
@@ -42,7 +40,6 @@ import aiohttp
 import ee
 import eemont
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import nest_asyncio
 import numpy as np
 import pandas as pd
@@ -50,7 +47,6 @@ import rasterio
 import utm
 from pyproj import CRS
 from rasterio.io import MemoryFile
-from shapely import MultiPolygon, to_geojson
 from tqdm.notebook import tqdm
 from typeguard import typechecked
 
@@ -582,7 +578,8 @@ def combine_band_name(
     reducer: str,
     reducer_band: str | None = None,
 ) -> str:
-    """Combines a composite index, band label and reducer (+ reducer band) into a band name.
+    """Combines a composite index, band label and reducer (+ reducer band) into
+    a band name.
 
     Args:
         composite_idx:
@@ -615,7 +612,8 @@ def combine_band_name(
 
 @typechecked
 def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
-    """Splits a band name into its composite index, band label and reducer (+ reducer band).
+    """Splits a band name into its composite index, band label and reducer (+
+    reducer band).
 
     Args:
         A string for the band name. Expects format of combine_band_name(). Other cases are not handled well.
