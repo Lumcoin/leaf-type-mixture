@@ -267,7 +267,8 @@ def _prettify_band_names(image: ee.Image) -> ee.Image:
 async def _fetch(
     url: str,
 ) -> bytes:
-    async with aiohttp.ClientSession() as session:
+    # TODO: Check if 60 minutes is enough for large downloads
+    async with aiohttp.ClientSession(read_timeout=60 * 60) as session:
         async with session.get(url) as response:
             if response.status != 200:
                 raise ValueError(f"Failed to fetch {url}")
@@ -307,9 +308,18 @@ async def _async_gather(
 def _gather(
     *coroutines: Coroutine,
     desc: str | None = None,
+    asynchronous: bool = True,
 ) -> list[Any]:
     nest_asyncio.apply()
-    return asyncio.run(_async_gather(*coroutines, desc=desc))
+    if asynchronous:
+        return asyncio.run(_async_gather(*coroutines, desc=desc))
+
+    # Run synchronously
+    results = []
+    for coroutine in tqdm(coroutines, desc=desc):
+        results.append(asyncio.run(coroutine))
+
+    return results
 
 
 @typechecked
@@ -398,8 +408,17 @@ def _save_image(
         )
 
     # Get all image data using gather()
-    coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
-    results = _gather(*coroutines, desc="Batches")
+    try:
+        coroutines = [
+            _get_image_data(image, bands=batch) for batch in band_batches
+        ]
+        results = _gather(*coroutines, desc="Batches")
+    except aiohttp.ClientError:
+        print("Failed to download asynchroniously. Trying synchroniously...")
+        coroutines = [
+            _get_image_data(image, bands=batch) for batch in band_batches
+        ]
+        results = _gather(*coroutines, desc="Batches", asynchronous=False)
 
     # Combine results
     profile = results[0][0]
