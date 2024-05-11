@@ -508,7 +508,7 @@ def _compute_time_window(
     time_window: Tuple[int, int],
     s2: ee.ImageCollection,
     bands: List[str],
-    temporal_reducers: List[str],
+    temporal_reducers: List[str] | None,
     indices: List[str] | None,
     level_2a: bool,
     remove_clouds: bool,
@@ -539,7 +539,9 @@ def _compute_time_window(
 
     # Reduce by temporal_reducers
     reduced_images = []
-    for temporal_reducer in temporal_reducers:
+    for temporal_reducer in (
+        temporal_reducers if temporal_reducers else ["mean"]
+    ):
         reducer = getattr(ee.Reducer, temporal_reducer)()
         reduced_image = s2_window.reduce(reducer)
 

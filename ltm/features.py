@@ -218,67 +218,6 @@ def save_raster(
 
 
 @typechecked
-def drop_nan_rows(
-    *data: pd.Series | pd.DataFrame | np.ndarray,
-    reset_index: bool = False,
-) -> (
-    pd.Series
-    | pd.DataFrame
-    | np.ndarray
-    | Tuple[pd.Series | pd.DataFrame | np.ndarray, ...]
-):
-    """Drops rows with any NaN values.
-
-    Args:
-        rows:
-            Pandas Series, DataFrames or Numpy Array with the same number of rows.
-        reset_index:
-            A boolean that resets the indices of the results if true. Defaults to False.
-
-    Returns:
-        A pandas Series or DataFrame or a tuple of such containing the input data without NaN values.
-    """
-    # Check if all arrays have the same number of rows and at max two dimensions
-    num_rows = set(len(datum) for datum in data)
-    if len(num_rows) != 1:
-        raise ValueError("All arrays must have the same number of rows.")
-    num_rows = num_rows.pop()
-
-    # Drop rows with NaN values
-    mask = np.ones(num_rows, dtype=bool)
-    for datum in data:
-        if isinstance(datum, pd.Series):
-            mask &= ~datum.isna().values
-        elif isinstance(datum, pd.DataFrame):
-            mask &= ~datum.isna().any(axis=1)
-        elif isinstance(datum, np.ndarray):
-            datum = np.reshape(datum, (num_rows, -1))
-            mask &= ~np.isnan(datum).any(axis=1)
-
-    # Raise an error if all rows are dropped
-    if not mask.any():
-        print(
-            "Warning: All rows contain NaN values. Have you tried interpolating using interpolate_data_and_bands?"
-        )
-
-    # Prepare result
-    result = tuple(datum[mask] for datum in data)
-    if reset_index:
-        result = tuple(
-            (
-                datum
-                if isinstance(datum, np.ndarray)
-                else datum.reset_index(drop=True)
-            )
-            for datum in result
-        )
-    if len(data) == 1:
-        result = result[0]
-
-    return result
-
-
-@typechecked
 def to_float32(data: pd.DataFrame) -> pd.DataFrame:
     """Converts the data to float32 and replaces infinities with the maximum
     and minimum float32 values.
