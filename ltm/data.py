@@ -267,7 +267,6 @@ def _prettify_band_names(image: ee.Image) -> ee.Image:
 async def _fetch(
     url: str,
 ) -> bytes:
-    # TODO: Check if 60 minutes is enough for large downloads
     async with aiohttp.ClientSession(read_timeout=60 * 60) as session:
         async with session.get(url) as response:
             if response.status != 200:
@@ -413,7 +412,9 @@ def _save_image(
             _get_image_data(image, bands=batch) for batch in band_batches
         ]
         results = _gather(*coroutines, desc="Batches")
-    except aiohttp.ClientError:
+    except (aiohttp.ClientError, ValueError) as exc:
+        if len(band_batches) == 1:
+            raise exc
         print("Failed to download asynchroniously. Trying synchroniously...")
         coroutines = [
             _get_image_data(image, bands=batch) for batch in band_batches
@@ -436,13 +437,17 @@ def _save_image(
 @typechecked
 def _mask_s2_clouds(
     image: ee.Image,
+    cloud_dist: int = 1000,  # 1000 m is used by https://github.com/gee-community/geetools/blob/09c563ffd1d09f777f1f110db578240494b0abbb/geetools/Image/__init__.py#L1163
 ) -> ee.Image:
     """Masks clouds in a Sentinel-2 image using the QA band.
 
     From https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#colab-python
 
     Args:
-        image (ee.Image): A Sentinel-2 image.
+        image:
+            A GEE Sentinel-2 image.
+        cloud_dist:
+            An integer indicating the distance in meters to dilate the cloud mask. Defaults to 1000.
 
     Returns:
         ee.Image: A cloud-masked Sentinel-2 image.
@@ -457,12 +462,16 @@ def _mask_s2_clouds(
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0)
     mask = mask.And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
 
+    # Dilate the mask
+    mask = mask.focal_min(radius=cloud_dist, units="meters")
+
     return image.updateMask(mask)
 
 
 @typechecked
 def _mask_level_2a(
     image: ee.Image,
+    cloud_dist: int = 1000,  # 1000 m is used by [see _mask_s2_clouds]
 ) -> ee.Image:
     # Mask clouds
     cloud_prob = image.select("MSK_CLDPRB")
@@ -473,6 +482,9 @@ def _mask_level_2a(
     snow_prob = image.select("MSK_SNWPRB")
     snow_prob = snow_prob.unmask(sameFootprint=False)
     mask = mask.And(snow_prob.eq(0))
+
+    # Dilate the mask
+    mask = mask.focal_min(radius=cloud_dist, units="meters")
 
     return image.updateMask(mask)
 
