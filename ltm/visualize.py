@@ -95,7 +95,7 @@ def _raster2rgb(
 
     # Mask NaN values
     if mask_nan:
-        nan_mask = np.any(np.isnan(raster), axis=0)
+        nan_mask = np.any(np.isnan(rgb_plot), axis=2)
         rgb_plot[nan_mask] = np.nan
 
     return rgb_plot
@@ -110,8 +110,8 @@ def _plot_timeseries(
     num_composites = len(rgb_rasters)
 
     # Get min and max values for normalization
-    min_value = min(np.nanmin(rgb_raster) for rgb_raster in rgb_rasters)
-    max_value = max(np.nanmax(rgb_raster) for rgb_raster in rgb_rasters)
+    min_value = np.nanmin(np.array(rgb_rasters))
+    max_value = np.nanmax(np.array(rgb_rasters))
 
     # Plot the rasters below each other
     fig, axs = plt.subplots(nrows=num_composites, figsize=(10, 10))
