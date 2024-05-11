@@ -437,21 +437,7 @@ def _save_image(
 @typechecked
 def _mask_s2_clouds(
     image: ee.Image,
-    cloud_dist: int = 1000,  # 1000 m is used by https://github.com/gee-community/geetools/blob/09c563ffd1d09f777f1f110db578240494b0abbb/geetools/Image/__init__.py#L1163
 ) -> ee.Image:
-    """Masks clouds in a Sentinel-2 image using the QA band.
-
-    From https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#colab-python
-
-    Args:
-        image:
-            A GEE Sentinel-2 image.
-        cloud_dist:
-            An integer indicating the distance in meters to dilate the cloud mask. Defaults to 1000.
-
-    Returns:
-        ee.Image: A cloud-masked Sentinel-2 image.
-    """
     qa = image.select("QA60")
 
     # Bits 10 and 11 are clouds and cirrus, respectively.
@@ -462,16 +448,12 @@ def _mask_s2_clouds(
     mask = qa.bitwiseAnd(cloud_bit_mask).eq(0)
     mask = mask.And(qa.bitwiseAnd(cirrus_bit_mask).eq(0))
 
-    # Dilate the mask
-    mask = mask.focal_min(radius=cloud_dist, units="meters")
-
     return image.updateMask(mask)
 
 
 @typechecked
 def _mask_level_2a(
     image: ee.Image,
-    cloud_dist: int = 1000,  # 1000 m is used by [see _mask_s2_clouds]
 ) -> ee.Image:
     # Mask clouds
     cloud_prob = image.select("MSK_CLDPRB")
@@ -482,9 +464,6 @@ def _mask_level_2a(
     snow_prob = image.select("MSK_SNWPRB")
     snow_prob = snow_prob.unmask(sameFootprint=False)
     mask = mask.And(snow_prob.eq(0))
-
-    # Dilate the mask
-    mask = mask.focal_min(radius=cloud_dist, units="meters")
 
     return image.updateMask(mask)
 
