@@ -14,7 +14,7 @@ class TestModels(unittest.TestCase):
         regression = make_regression(
             n_samples=100, n_features=10, random_state=42
         )
-        self.data, self.target = regression
+        self.data, self.target = regression.data, regression.target
 
         def suggest_float(*args, **kwargs):
             return "suggest_float", args, kwargs

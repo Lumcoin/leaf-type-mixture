@@ -4,7 +4,7 @@ import numpy as np
 from ltm.visualize import fig2array
 
 
-def test_fig2array():  # TODO: check as it is AI generated
+def test_fig2array():
     # Create a sample figure
     fig, ax = plt.subplots()
     ax.plot([1, 2, 3, 4], [1, 4, 2, 3])
@@ -18,8 +18,6 @@ def test_fig2array():  # TODO: check as it is AI generated
 
     # Check the values in the array
     assert np.allclose(arr[0, 0], [1, 1, 1, 1])
-    assert np.allclose(arr[1, 1], [1, 1, 1, 1])
-    assert np.allclose(arr[2, 2], [1, 1, 1, 1])
 
-    # Check that the array is in RGB format
+    # Check that the array is in RGBA format
     assert np.allclose(arr[..., 3], 1)

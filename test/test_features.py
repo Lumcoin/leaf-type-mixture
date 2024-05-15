@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 import rasterio
 
-from ltm.features import drop_nan_rows, load_raster
+from ltm.features import load_raster
 
 
 @pytest.fixture(name="data_path")
@@ -55,18 +55,3 @@ def test_load_raster(target_path):
     target = load_raster(target_path)
     assert isinstance(target, pd.Series)
     assert len(target) == 200
-
-
-def test_drop_nan_rows():
-    data = np.array([[1, 2, np.nan], [4, np.nan, 6], [7, 8, 9]])
-    data = pd.DataFrame(data)
-    target = np.array([0, 1, 0])
-    target = pd.Series(target)
-    data_clean, target_clean = drop_nan_rows(data, target)
-    assert isinstance(data_clean, pd.DataFrame)
-    assert isinstance(target_clean, pd.Series)
-    assert len(data_clean.columns) == 3
-    assert len(data_clean) == 1
-    assert len(target_clean) == 1
-    assert data_clean.values[0, 0] == 7
-    assert target_clean.values[0] == 0
