@@ -548,6 +548,10 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     if result is not None:
         return result
 
+    # Create paths
+    if save_folder is not None:
+        study_path, model_path, cache_path = _create_paths(model, save_folder)
+
     def callback(study, _):
         # Save intermediate study
         if use_caching and save_folder is not None:
@@ -595,10 +599,6 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         except ValueError:
             print("All fits failed, returning NaN.")
             return np.nan
-
-    # Create paths
-    if save_folder is not None:
-        study_path, model_path, cache_path = _create_paths(model, save_folder)
 
     if use_caching and save_folder is not None and Path(cache_path).exists():
         # Resume search from cache
