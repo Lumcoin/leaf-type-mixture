@@ -1,3 +1,25 @@
+"""Module for visualizing raster data and creating plots.
+
+This module provides functions for visualizing raster data, creating plots from pandas DataFrames and saving them as images.
+
+Typical usage example:
+
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from ltm.visualize import plot_report
+
+    # Create a DataFrame
+    df = pd.DataFrame({
+        "A": [1, 2, 4],
+        "B": [4, 6, 7],
+    })
+
+    # Plot the DataFrame
+    plot_report(df, title="My Plot", xlabel="X-axis", ylabel="Y-axis", figsize=(10, 5), marker="o")
+
+    plt.show()
+"""
+
 import io
 from typing import Any, List, Tuple
 

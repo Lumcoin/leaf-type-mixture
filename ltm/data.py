@@ -53,6 +53,11 @@ from typeguard import typechecked
 BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
 CONIFER_PROPORTION = "Conifer Proportion"
+CONIFER = "conifer"
+DBH = "dbh"
+LATITUDE = "latitude"
+LONGITUDE = "longitude"
+SCALE = 10  # Fine Sentinel 2 resolution in meters
 
 
 @typechecked
@@ -65,93 +70,89 @@ def _initialize_ee() -> None:
 
 
 @typechecked
-def _sc_check_args(
-    *args: Any,
+def _check_time_window(
+    time_window: Tuple[datetime.date, datetime.date],
+    level_2a: bool,
 ) -> None:
-    # Unpack arguments
-    (
-        target_path_from,
-        data_path_to,
-        time_window,
-        num_composites,
-        temporal_reducers,
-        indices,
-        level_2a,
-        sentinel_bands,
-        _,
-        batch_size,
-    ) = args
-
-    # Ensure proper time windows
-    if round(time_window[0].timestamp() * 1000) >= round(
-        time_window[1].timestamp() * 1000
-    ):
+    start, end = [round(time.timestamp() * 1000) for time in time_window]
+    if start >= end:
         raise ValueError(
-            f"start ({time_window[0]}) must be before the end ({time_window[1]}) of timewindow"
+            f"start ({time_window[0]}) must be before end ({time_window[1]}) of timewindow"
         )
     if level_2a and time_window[0] < datetime.datetime(2017, 3, 28):
         if time_window[0] >= datetime.datetime(2015, 6, 27):
             raise ValueError(
                 "Level-2A data is not available before 2017-03-28. Use Level-1C data instead."
             )
+
         raise ValueError("Level-2A data is not available before 2017-03-28.")
     if not level_2a and time_window[0] < datetime.datetime(2015, 6, 27):
         raise ValueError("Level-1C data is not available before 2015-06-27.")
 
-    # Ensure proper path format
-    _path_check(target_path_from, data_path_to, suffix=".tif")
 
-    # Check if indices are valid eemont indices
-    if indices is not None:
-        valid_indices = list_indices()
-        invalid_indices = [
-            index for index in indices if index not in valid_indices
-        ]
-        if invalid_indices:
-            raise ValueError(
-                f"Invalid indices not in eemont package: {', '.join(invalid_indices)}"
-            )
+@typechecked
+def _check_items(
+    items: list | None,
+    valid_items: list,
+    items_desc: str,
+    within_desc: str,
+) -> None:
+    if items is None:
+        return
 
-    # Check if batch_size is positive
-    if batch_size is not None and batch_size <= 0:
-        raise ValueError("batch_size must be a positive integer or None")
+    if len(set(items)) == len(items):
+        return
 
-    # Use ee.Reducer.mean() if temporal_reducers is None
-    if temporal_reducers is None:
-        temporal_reducers = ["mean"]
-    if len(set(temporal_reducers)) < len(temporal_reducers):
+    duplicates = [item for item in set(items) if items.count(item) > 1]
+    if duplicates:
+        raise ValueError(f"Duplicate {items_desc}: {', '.join(duplicates)}")
+
+    invalid_items = [item for item in items if item not in valid_items]
+    if invalid_items:
         raise ValueError(
-            "temporal_reducers must not contain duplicate reducers"
+            f"Invalid {items_desc} not in {within_desc}: {', '.join(invalid_items)}"
         )
 
-    # Check if all reducers are valid
-    valid_reducers = list_reducers()
-    invalid_reducers = [
-        reducer
-        for reducer in temporal_reducers
-        if reducer not in valid_reducers
-    ]
-    if invalid_reducers:
-        raise ValueError(
-            f"Invalid reducers not in ee.Reducer: {', '.join(invalid_reducers)}"
-        )
 
-    # Check if all bands are valid. Use all bands if sentinel_bands is None
-    valid_bands = list_bands(level_2a)
-    if sentinel_bands is None:
-        sentinel_bands = valid_bands
-    illegal_bands = [b for b in sentinel_bands if b not in valid_bands]
-    if any(illegal_bands):
-        raise ValueError(f"{illegal_bands} not available in: {valid_bands}")
+@typechecked
+def _check_path(
+    *paths: str,
+    suffix: str,
+    check_parent: bool = True,
+    check_self: bool = True,
+) -> None:
+    for path in paths:
+        pathlib = Path(path)
+        if pathlib.suffix != suffix:
+            raise ValueError(f"{path} must end with {suffix}")
+        if check_parent and not pathlib.parent.exists():
+            raise ValueError(f"{path} parent directory does not exist")
+        if check_self and not pathlib.exists():
+            raise ValueError(f"{path} does not exist")
 
-    # Check if the limit of 5000 bands is exceeded
-    indices = indices if indices is not None else []
-    if (
-        len(sentinel_bands + indices) * len(temporal_reducers) * num_composites
-        > 5000
-    ):
+
+@typechecked
+def _check_band_limit(
+    sentinel_bands: List[str] | None,
+    level_2a: bool,
+    indices: List[str] | None,
+    temporal_reducers: List[str] | None,
+    num_composites: int,
+) -> None:
+    num_bands = (
+        len(sentinel_bands)
+        if sentinel_bands is not None
+        else len(list_bands(level_2a))
+    )
+    num_bands += len(indices) if indices is not None else 0
+    num_reducers = (
+        len(temporal_reducers) if temporal_reducers is not None else 1
+    )
+
+    total_bands = num_bands * num_reducers * num_composites
+    if total_bands > 5000:
         raise ValueError(
-            f"You exceed the 5000 bands max limit of GEE: {len(sentinel_bands + indices) * len(temporal_reducers) * num_composites} bands"
+            f"You exceed the 5000 bands max limit of GEE: {total_bands} bands"
         )
 
 
@@ -173,7 +174,10 @@ def _sentinel_crs(
 def _split_time_window(
     time_window: Tuple[datetime.date, datetime.date],
     num_splits: int,
+    level_2a: bool,
 ) -> List[Tuple[datetime.date, datetime.date]]:
+    _check_time_window(time_window, level_2a)
+
     start = time_window[0]
     end = time_window[1]
     delta = (end - start + datetime.timedelta(days=1)) / num_splits
@@ -198,6 +202,8 @@ def _split_time_window(
 def _get_roi_scale_crs(
     target_path: str,
 ) -> Tuple[ee.Geometry, float, str]:
+    _check_path(target_path, suffix=".tif")
+
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     with rasterio.open(target_path) as src:
         crs = src.crs.to_string()
@@ -216,6 +222,93 @@ def _get_roi_scale_crs(
     roi = fc.geometry().bounds(0.01, proj=crs)
 
     return roi, scale, crs
+
+
+@typechecked
+def _select_bands(
+    s2_window: ee.ImageCollection,
+    sentinel_bands: List[str] | None,
+    indices: List[str] | None,
+    level_2a: bool,
+    remove_clouds: bool,
+) -> ee.ImageCollection:
+    # Check sentinel_bands and indices
+    within_desc = "Level 2A" if level_2a else "Level 1C"
+    _check_items(
+        sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc
+    )
+    _check_items(indices, list_indices(), "indices", "eemont package")
+
+    # Combine bands and indices
+    bands = sentinel_bands.copy()
+    if indices is not None:
+        bands += indices
+
+    if s2_window.size().getInfo() > 0:
+        # Remove clouds
+        if remove_clouds:
+            s2_window = s2_window.map(_mask_s2_clouds)
+            if level_2a:
+                s2_window = s2_window.map(_mask_level_2a)
+        s2_window = s2_window.map(lambda image: image.divide(10000))
+
+        # Add indices before possibly removing bands necessary for computing indices
+        if indices:
+            s2_window = s2_window.spectralIndices(indices)
+
+        # Select bands
+        s2_window = s2_window.select(bands)
+    else:
+        # Handle empty image collection
+        masked_image = ee.Image.constant([0] * len(bands)).rename(bands)
+        masked_image = masked_image.mask(masked_image)
+        s2_window = ee.ImageCollection([masked_image])
+
+    return s2_window
+
+
+@typechecked
+def _reduce_window(
+    s2_window: ee.ImageCollection,
+    temporal_reducers: List[str] | None,
+) -> ee.Image:
+    _check_items(
+        temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer"
+    )
+
+    # Default to mean reducer
+    if not temporal_reducers:
+        temporal_reducers = ["mean"]
+
+    # Reduce by temporal_reducers
+    reduced_images = []
+    for temporal_reducer in temporal_reducers:
+        reducer = getattr(ee.Reducer, temporal_reducer)()
+        reduced_image = s2_window.reduce(reducer)
+
+        band_names = reduced_image.bandNames().getInfo()
+        if list_reducer_bands(temporal_reducer) is None:
+            band_names = [
+                f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
+                for band_name in reduced_image.bandNames().getInfo()
+            ]
+        else:
+            # Handle reducers like kendallsCorrelation with multiple outputs
+            new_band_names = []
+            for band_name in band_names:
+                band, reducer_label = _split_reducer_band_name(band_name)
+                new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
+                new_band_names.append(new_band_name)
+            band_names = new_band_names
+
+        reduced_image = reduced_image.rename(band_names)
+
+        reduced_images.append(reduced_image)
+
+    # Combine reduced_images into one image
+    datum = ee.ImageCollection(reduced_images).toBands()
+
+    return datum
 
 
 @typechecked
@@ -388,6 +481,11 @@ def _save_image(
     file_path: str,
     batch_size: int | None = None,
 ) -> None:
+    # Check file path and batch size
+    _check_path(file_path, suffix=".tif", check_self=False)
+    if not (batch_size is None or batch_size > 0):
+        raise ValueError("batch_size must be a positive integer or None")
+
     # Get image data
     profile = None
     image_raster = None
@@ -487,88 +585,84 @@ def _compute_area(
 
 
 @typechecked
-def _path_check(
-    *paths: str,
-    suffix: str,
-    check_parent: bool = True,
-    check_self: bool = False,
-) -> None:
-    for path in paths:
-        pathlib = Path(path)
-        if pathlib.suffix != suffix:
-            raise ValueError(f"{path} must end with {suffix}")
-        if check_parent and not pathlib.parent.exists():
-            raise ValueError(f"{path} parent directory does not exist")
-        if check_self and not pathlib.exists():
-            raise ValueError(f"{path} does not exist")
+def _check_plot(
+    plot: pd.DataFrame,
+) -> pd.DataFrame:
+    plot = plot.rename(columns=str.lower)
+
+    expected_dtypes = {
+        CONIFER: np.int8,
+        DBH: np.float64,
+        LATITUDE: np.float64,
+        LONGITUDE: np.float64,
+    }
+
+    expected_columns = set(expected_dtypes.keys())
+    columns = set(plot.columns)
+    if expected_columns != columns.intersection(expected_columns):
+        raise ValueError("Columns do not match expected columns")
+
+    plot = plot.astype(expected_dtypes)
+
+    return plot
 
 
 @typechecked
-def _compute_time_window(
-    time_window: Tuple[int, int],
-    s2: ee.ImageCollection,
-    bands: List[str],
-    temporal_reducers: List[str] | None,
-    indices: List[str] | None,
-    level_2a: bool,
-    remove_clouds: bool,
-) -> ee.Image:
-    # Filter by roi and timewindow
-    start, end = time_window
-    s2_window = s2.filterDate(start, end)
+def _compute_target(
+    broadleafs: ee.FeatureCollection,
+    conifers: ee.FeatureCollection,
+    plot: pd.DataFrame,
+    area_as_target: bool,
+) -> Tuple[ee.Image, Tuple[ee.Geometry, float, str]]:
+    # Get region of interest (ROI)
+    roi = broadleafs.merge(conifers).geometry()
 
-    if s2_window.size().getInfo() > 0:
-        # Remove clouds
-        if remove_clouds:
-            s2_window = s2_window.map(_mask_s2_clouds)
-            if level_2a:
-                s2_window = s2_window.map(_mask_level_2a)
-        s2_window = s2_window.map(lambda image: image.divide(10000))
+    # Get CRS in epsg format for center of the roi
+    longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
+    crs = _sentinel_crs(latitude, longitude)
 
-        # Add indices before possibly removing bands necessary for computing indices
-        if indices:
-            s2_window = s2_window.spectralIndices(indices)
+    # Convert ROI to bounds in output crs
+    roi = roi.bounds(0.01, crs)
 
-        # Select bands
-        s2_window = s2_window.select(bands)
+    # Check if rectangle has reasonable size
+    roi_area = roi.area(0.01).getInfo()
+    if roi_area == 0:
+        raise ValueError(
+            "Plot bounding box has area 0. Check if plot coordinates are valid."
+        )
+    if roi_area > 1e7:
+        raise ValueError(
+            "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
+        )
+
+    # Render plot as fine resolution image, then reduce to coarse resolution
+    fine_scale = min(plot["dbh"].min() * 5, SCALE)
+    if plot["dbh"].min() < 0.05:
+        print(
+            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
+        )
+        fine_scale = 0.25
+
+    # Compute broadleaf and conifer area
+    broadleaf_area = _compute_area(broadleafs, SCALE, fine_scale, crs)
+    conifer_area = _compute_area(conifers, SCALE, fine_scale, crs)
+
+    # Compute target (conifer proportion) from broadleaf_area and conifer_area
+    total_area = broadleaf_area.add(conifer_area)
+    if area_as_target:
+        target = broadleaf_area.addBands(conifer_area)
+        target = target.updateMask(
+            total_area.gt(0)
+        )  # Remove pixels with no trees
+        target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
-        # Handle empty image collection
-        masked_image = ee.Image.constant([0] * len(bands)).rename(bands)
-        masked_image = masked_image.mask(masked_image)
-        s2_window = ee.ImageCollection([masked_image])
+        target = conifer_area.divide(total_area)
+        target = target.updateMask(
+            total_area.gt(0)
+        )  # Remove pixels with no trees
+        target = target.rename(CONIFER_PROPORTION)
 
-    # Reduce by temporal_reducers
-    reduced_images = []
-    for temporal_reducer in (
-        temporal_reducers if temporal_reducers else ["mean"]
-    ):
-        reducer = getattr(ee.Reducer, temporal_reducer)()
-        reduced_image = s2_window.reduce(reducer)
-
-        # Format band_names like "B1_kendallsCorrelation_p-value"
-        band_names = reduced_image.bandNames().getInfo()
-        if len(band_names) == len(bands):
-            band_names = [
-                f"{_split_reducer_band_name(band_name)[0]}_{temporal_reducer}"
-                for band_name in reduced_image.bandNames().getInfo()
-            ]
-        else:
-            # Handle reducers like kendallsCorrelation with multiple outputs
-            new_band_names = []
-            for band_name in band_names:
-                band, reducer_label = _split_reducer_band_name(band_name)
-                new_band_name = f"{band}_{temporal_reducer}_{reducer_label}"
-                new_band_names.append(new_band_name)
-            band_names = new_band_names
-
-        reduced_image = reduced_image.rename(band_names)
-
-        reduced_images.append(reduced_image)
-
-    # Combine reduced_images into one image
-    datum = ee.ImageCollection(reduced_images).toBands()
-
-    return datum
+    return target, (roi, SCALE, crs)
 
 
 @lru_cache
@@ -802,7 +896,7 @@ def compute_label(
         target_path:
             A string representing the file path to save the raster with values between 0 and 1 for the conifer proportion.
         plot:
-            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively. This function is case insensitive regarding column names.
+            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively.
         area_as_target:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a target with two bands, one for each leaf type. Defaults to False.
 
@@ -813,28 +907,9 @@ def compute_label(
     _initialize_ee()
     print("Preparing labels...")
 
-    # Ensure proper plot DataFrame format
-    expected_dtypes = {
-        "conifer": np.int8,
-        "dbh": np.float64,
-        "latitude": np.float64,
-        "longitude": np.float64,
-    }
-    expected_columns = set(expected_dtypes.keys())
-    plot = plot.rename(columns=str.lower)
-    columns = set(plot.columns)
-    if expected_columns != columns.intersection(expected_columns):
-        raise ValueError("Columns do not match expected columns")
-    plot = plot.astype(expected_dtypes)
-
-    # Ensure proper path format
-    target_pathlib = Path(target_path)
-    if target_pathlib.suffix != ".tif":
-        raise ValueError("target_path must be a string ending in .tif")
-    if not target_pathlib.parent.exists():
-        raise ValueError(
-            f"target_path parent directory does not exist: {target_pathlib.parent}"
-        )
+    # Ensure proper plot DataFrame and path format
+    plot = _check_plot(plot)
+    _check_path(target_path, suffix=".tif", check_self=False)
 
     # Upload plot
     broadleafs = []
@@ -854,56 +929,10 @@ def compute_label(
     broadleafs = ee.FeatureCollection(broadleafs)
     conifers = ee.FeatureCollection(conifers)
 
-    # Get region of interest (ROI)
-    roi = broadleafs.merge(conifers).geometry()
-
-    # Get CRS in epsg format for center of the roi
-    longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
-    crs = _sentinel_crs(latitude, longitude)
-
-    # Convert ROI to bounds in output crs
-    roi = roi.bounds(0.01, crs)
-
-    # Check if rectangle has reasonable size
-    roi_area = roi.area(0.01).getInfo()
-    if roi_area == 0:
-        raise ValueError(
-            "Plot bounding box has area 0. Check if plot coordinates are valid."
-        )
-    if roi_area > 1e7:
-        raise ValueError(
-            "Plot bounding box has area > 1e7. Check if plot coordinates are valid."
-        )
-
-    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
-    scale = 10
-
-    # Render plot as fine resolution image, then reduce to coarse resolution
-    fine_scale = min(plot["dbh"].min() * 5, scale)
-    if plot["dbh"].min() < 0.05:
-        print(
-            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
-        )
-        fine_scale = 0.25
-
-    # Compute broadleaf and conifer area
-    broadleaf_area = _compute_area(broadleafs, scale, fine_scale, crs)
-    conifer_area = _compute_area(conifers, scale, fine_scale, crs)
-
-    # Compute target (conifer proportion) from broadleaf_area and conifer_area
-    total_area = broadleaf_area.add(conifer_area)
-    if area_as_target:
-        target = broadleaf_area.addBands(conifer_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
-        target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
-    else:
-        target = conifer_area.divide(total_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
-        target = target.rename(CONIFER_PROPORTION)
+    # Compute target
+    target, (roi, scale, crs) = _compute_target(
+        broadleafs, conifers, plot, area_as_target
+    )
 
     # Clip to roi and reproject
     target = target.clip(roi)
@@ -937,13 +966,8 @@ def shapefile2raster(
     print("Preparing labels...")
 
     # Ensure proper path format
-    raster_pathlib = Path(raster_path)
-    if raster_pathlib.suffix != ".tif":
-        raise ValueError("target_path must be a string ending in .tif")
-    if not raster_pathlib.parent.exists():
-        raise ValueError(
-            f"target_path parent directory does not exist: {raster_pathlib.parent}"
-        )
+    _check_path(shapefile_path, suffix=".shp")
+    _check_path(raster_path, suffix=".tif", check_self=False)
 
     # Load shapefile
     shapefile = gpd.read_file(shapefile_path)
@@ -978,13 +1002,10 @@ def shapefile2raster(
             "Plot bounding box has area > 1e10. Check if plot coordinates are valid."
         )
 
-    # Define scale at 10 m/pixel, same as max Sentinel 2 resolution
-    scale = 10
-
     # Clip to roi and reproject
     target = ee.Image.constant(1)
     target = target.clip(polygons.geometry())
-    target = target.reproject(scale=scale, crs=crs)
+    target = target.reproject(scale=SCALE, crs=crs)
 
     # Save target
     print("Computing image...")
@@ -994,7 +1015,7 @@ def shapefile2raster(
 
 
 @typechecked
-def sentinel_composite(  # pylint: disable=too-many-arguments
+def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
     target_path_from: str,
     data_path_to: str,
     time_window: Tuple[datetime.date, datetime.date],
@@ -1040,58 +1061,45 @@ def sentinel_composite(  # pylint: disable=too-many-arguments
     _initialize_ee()
     print("Preparing Sentinel-2 data...")
 
-    # Check arguments
-    args = [
-        target_path_from,
-        data_path_to,
-        time_window,
-        num_composites,
-        temporal_reducers,
-        indices,
-        level_2a,
+    # Check if band limit of 5000 is exceeded
+    _check_band_limit(
         sentinel_bands,
-        remove_clouds,
-        batch_size,
-    ]
-    _sc_check_args(*args)
-
-    # Combine sentinel_bands and indices
-    bands = sentinel_bands.copy()
-    if indices is not None:
-        bands += indices
+        level_2a,
+        indices,
+        temporal_reducers,
+        num_composites,
+    )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
     roi, scale, crs = _get_roi_scale_crs(target_path_from)
 
     # Get Sentinel 2 image collection filtered by bounds
-    if level_2a:
-        s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-    else:
-        s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+    s2 = ee.ImageCollection(
+        "COPERNICUS/S2_SR_HARMONIZED"
+        if level_2a
+        else "COPERNICUS/S2_HARMONIZED"
+    )
     s2 = s2.filterBounds(roi)
-
-    # Split time window into sub windows and convert to strings
-    time_windows = _split_time_window(time_window, num_composites)
-    time_windows = [
-        (round(start.timestamp() * 1000), round(end.timestamp() * 1000))
-        for start, end in time_windows
-    ]
 
     # Compute composite for each time windows
     data = []
-    for time_window in time_windows:
-        datum = _compute_time_window(
-            time_window,
-            s2,
-            bands,
-            temporal_reducers,
+    for start, end in _split_time_window(time_window, num_composites, level_2a):
+        # Filter by roi and timewindow
+        s2_window = s2.filterDate(
+            round(start.timestamp() * 1000), round(end.timestamp() * 1000)
+        )
+
+        # Compute collection with selected bands and indices
+        s2_window = _select_bands(
+            s2_window,
+            sentinel_bands,
             indices,
             level_2a,
             remove_clouds,
         )
 
         # Add to data
-        data.append(datum)
+        data.append(_reduce_window(s2_window, temporal_reducers))
 
     # Stack images
     data = ee.ImageCollection(data).toBands()

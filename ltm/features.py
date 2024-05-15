@@ -26,7 +26,6 @@ Typical usage example:
 
 import os
 from collections import defaultdict
-from typing import Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np

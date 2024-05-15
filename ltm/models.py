@@ -66,7 +66,7 @@ from sklearn.preprocessing import StandardScaler
 from typeguard import typechecked
 
 from ltm.data import BROADLEAF_AREA, CONIFER_AREA, list_bands, list_indices
-from ltm.features import drop_nan_rows, load_raster, np2pd_like
+from ltm.features import load_raster, np2pd_like
 
 
 @typechecked
@@ -276,6 +276,95 @@ def _study2model(
 
 
 @typechecked
+def _create_paths(
+    model: BaseEstimator,
+    save_folder: str,
+) -> Tuple[Path, Path, Path]:
+    save_path_obj = Path(save_folder)
+    if not save_path_obj.parent.exists():
+        raise ValueError(
+            f"Directory of save_path does not exist: {save_path_obj.parent}"
+        )
+
+    # Check if files already exist
+    model_name = model.__class__.__name__
+    cache_path = save_path_obj / f"{model_name}_cache.pkl"
+    study_path = save_path_obj / f"{model_name}_study.pkl"
+    model_path = save_path_obj / f"{model_name}.pkl"
+
+    return study_path, model_path, cache_path
+
+
+@typechecked
+def _check_save_folder(
+    model: BaseEstimator,
+    data: npt.ArrayLike,
+    target: npt.ArrayLike,
+    save_folder: str | None,
+    use_caching: bool,
+) -> Tuple[Pipeline, optuna.study.Study] | None:
+    # Check for valid save_path
+    if save_folder is not None:
+        study_path, model_path, _ = _create_paths(model, save_folder)
+
+        if study_path.exists() and model_path.exists():
+            print(
+                f"Files already exist, skipping search: {study_path}, {model_path}"
+            )
+
+            # Load best model and study
+            with open(model_path, "rb") as file:
+                best_model = dill.load(file)
+            with open(study_path, "rb") as file:
+                study = dill.load(file)
+
+            return best_model, study
+
+        if study_path.exists():
+            # Inform user
+            print("Creating model from study file...")
+
+            # Load the study and create the best model
+            with open(study_path, "rb") as file:
+                study = dill.load(file)
+            best_model = _study2model(study, model, data, target)
+
+            # Save best model
+            with open(model_path, "wb") as file:
+                dill.dump(best_model, file)
+
+            return best_model, study
+
+        if model_path.exists():
+            # Raise error if model file exists but study file is missing
+            raise ValueError(
+                f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
+            )
+    elif use_caching:
+        print(
+            "Warning: use_caching=True but save_folder=None, caching is disabled."
+        )
+
+    return None
+
+
+@typechecked
+def _save_study_model(
+    study: optuna.study.Study,
+    best_model: Pipeline,
+    study_path: Path,
+    model_path: Path,
+) -> None:
+    # Save study
+    with open(study_path, "wb") as file:
+        dill.dump(study, file)
+
+    # Save best model
+    with open(model_path, "wb") as file:
+        dill.dump(best_model, file)
+
+
+@typechecked
 def bands_from_importance(
     band_importance_path: str,
     level_2a: bool = True,
@@ -408,7 +497,7 @@ def best_scores(
 
 
 @typechecked
-def hyperparam_search(  # pylint: disable=too-many-arguments
+def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     model: BaseEstimator,
     search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
     data: npt.ArrayLike,
@@ -449,56 +538,15 @@ def hyperparam_search(  # pylint: disable=too-many-arguments
         use_caching:
             Whether to use caching for the search. Saves a [model]_cache.pkl for each step and resumes if a cache exists. The cache is deleted after the final study is saved. Defaults to True.
     """
-    # Check for valid save_path
-    model_name = model.__class__.__name__
-    if save_folder is not None:
-        save_path_obj = Path(save_folder)
-        if not save_path_obj.parent.exists():
-            raise ValueError(
-                f"Directory of save_path does not exist: {save_path_obj.parent}"
-            )
-
-        # Check if files already exist
-        cache_path = save_path_obj / f"{model_name}_cache.pkl"
-        study_path = save_path_obj / f"{model_name}_study.pkl"
-        model_path = save_path_obj / f"{model_name}.pkl"
-        if study_path.exists() and model_path.exists():
-            print(
-                f"Files already exist, skipping search: {study_path}, {model_path}"
-            )
-
-            # Load best model and study
-            with open(model_path, "rb") as file:
-                best_model = dill.load(file)
-            with open(study_path, "rb") as file:
-                study = dill.load(file)
-
-            return best_model, study
-
-        if study_path.exists():
-            # Inform user
-            print("Creating model from study file...")
-
-            # Load the study and create the best model
-            with open(study_path, "rb") as file:
-                study = dill.load(file)
-            best_model = _study2model(study, model, data, target)
-
-            # Save best model
-            with open(model_path, "wb") as file:
-                dill.dump(best_model, file)
-
-            return best_model, study
-
-        if model_path.exists():
-            # Raise error if model file exists but study file is missing
-            raise ValueError(
-                f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
-            )
-    elif use_caching:
-        print(
-            "Warning: use_caching=True but save_folder=None, caching is disabled."
-        )
+    result = _check_save_folder(
+        model,
+        data,
+        target,
+        save_folder,
+        use_caching,
+    )
+    if result is not None:
+        return result
 
     def callback(study, _):
         # Save intermediate study
@@ -548,34 +596,34 @@ def hyperparam_search(  # pylint: disable=too-many-arguments
             print("All fits failed, returning NaN.")
             return np.nan
 
-    # Optimize study with random state
+    # Create paths
+    if save_folder is not None:
+        study_path, model_path, cache_path = _create_paths(model, save_folder)
+
     if use_caching and save_folder is not None and Path(cache_path).exists():
+        # Resume search from cache
         with open(cache_path, "rb") as file:
             study = dill.load(file)
-        finished_trials = len(study.trials)
-        n_trials -= finished_trials
+        n_trials -= len(study.trials)
 
-        print(f"Resuming search from cache at trial {finished_trials}.")
+        print(f"Resuming search from cache at trial {len(study.trials)}.")
     else:
-        sampler = optuna.samplers.TPESampler(seed=random_state)
+        # Start new search
         study = optuna.create_study(
-            sampler=sampler, direction="maximize", study_name=model_name
+            sampler=optuna.samplers.TPESampler(seed=random_state),
+            direction="maximize",
+            study_name=model.__class__.__name__,
         )
+
+    # Optimize study
     study.optimize(
         objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
     )
 
     best_model = _study2model(study, model, data, target)
 
-    # Save study results and best model using dill
     if save_folder is not None:
-        # Save study
-        with open(study_path, "wb") as file:
-            dill.dump(study, file)
-
-        # Save best model
-        with open(model_path, "wb") as file:
-            dill.dump(best_model, file)
+        _save_study_model(study, best_model, study_path, model_path)
 
         # Delete cache
         if use_caching:
@@ -616,7 +664,8 @@ def cv_predict(
 
     # Remove NaNs while keeping the same indices
     indices_array = np.arange(shape[1] * shape[2])
-    data, target, indices_array = drop_nan_rows(data, target, indices_array)
+    mask = target.notna()
+    data, target, indices_array = data[mask], target[mask], indices_array[mask]
 
     # Predict using cross_val_predict
     target_pred = cross_val_predict(model, data, target, cv=cv, n_jobs=-1)
