@@ -17,7 +17,9 @@ def test_fig2array():
     assert arr.shape == (fig.canvas.get_width_height()[::-1] + (4,))
 
     # Check the values in the array
-    assert np.allclose(arr[0, 0], [1, 1, 1, 1])
+    assert np.allclose(
+        arr[0, 0], [1, 1, 1, 1]  # pylint: disable=unsubscriptable-object
+    )
 
     # Check that the array is in RGBA format
-    assert np.allclose(arr[..., 3], 1)
+    assert np.allclose(arr[..., 3], 1)  # pylint: disable=unsubscriptable-object
