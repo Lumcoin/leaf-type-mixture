@@ -555,7 +555,10 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     def callback(study, _):
         # Save intermediate study
         if use_caching and save_folder is not None:
-            with open(cache_path, "wb") as file:
+            with open(
+                cache_path,  # pylint: disable=possibly-unused-before-assignment
+                "wb",
+            ) as file:
                 dill.dump(study, file)
 
     def objective(trial):
