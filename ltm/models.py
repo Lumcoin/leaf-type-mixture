@@ -40,7 +40,6 @@ Typical usage example:
     )
 """
 
-from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Tuple
 
@@ -57,7 +56,6 @@ from sklearn.metrics._scorer import _BaseScorer
 from sklearn.model_selection import (
     BaseCrossValidator,
     KFold,
-    RandomizedSearchCV,
     cross_val_predict,
     cross_validate,
 )
