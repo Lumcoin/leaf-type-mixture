@@ -11,6 +11,8 @@ from sklearn.pipeline import Pipeline
 
 from ltm.models import cv_predict, hyperparam_search
 
+from .test_features import fixture_data_path, fixture_target_path
+
 
 class TestHyperparamSearch(unittest.TestCase):
     def setUp(self):
@@ -78,43 +80,6 @@ class TestHyperparamSearch(unittest.TestCase):
         self.assertEqual(
             elm_model1[-1].get_params(), elm_model2[-1].get_params()
         )
-
-
-@pytest.fixture(name="data_path")
-def fixture_data_path(tmp_path):
-    data = np.random.rand(2, 10, 20)
-    data_file = tmp_path / "data.tif"
-    with rasterio.open(
-        data_file,
-        "w",
-        driver="GTiff",
-        height=data.shape[1],
-        width=data.shape[2],
-        count=data.shape[0],
-        dtype=data.dtype,
-    ) as dst:
-        dst.write(data)
-        dst.descriptions = tuple(f"Mean B{i+1}" for i in range(data.shape[0]))
-    return str(data_file)
-
-
-@pytest.fixture(name="target_path")
-def fixture_target_path(tmp_path):
-    target = np.random.rand(10, 20)
-    target[0, 0] = np.nan
-    target_file = tmp_path / "target.tif"
-    with rasterio.open(
-        target_file,
-        "w",
-        driver="GTiff",
-        height=target.shape[0],
-        width=target.shape[1],
-        count=1,
-        dtype=target.dtype,
-    ) as dst:
-        dst.write(target, 1)
-
-    return str(target_file)
 
 
 def test_cv_predict(data_path, target_path):

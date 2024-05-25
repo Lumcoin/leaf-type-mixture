@@ -33,6 +33,7 @@ def fixture_data_path(tmp_path):
 @pytest.fixture(name="target_path")
 def fixture_target_path(tmp_path):
     target = np.random.rand(10, 20)
+    target[0, 0] = np.nan
     target_file = tmp_path / "target.tif"
     with rasterio.open(
         target_file,
