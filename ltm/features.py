@@ -52,7 +52,7 @@ def np2pd_like(
 
     Args:
         np_obj:
-            A numpy array.
+            A numpy array of shape=(rows, columns).
         like_pd_obj:
             A pandas Series or DataFrame.
 
@@ -228,6 +228,16 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
     Returns:
         A DataFrame containing the data as float32.
     """
+    # Check if dtype is numeric
+    dtypes = data.dtypes
+    illegal_dtypes = [
+        str(dtype) for dtype in dtypes if not np.issubdtype(dtype, np.number)
+    ]
+    if illegal_dtypes:
+        raise ValueError(
+            f"Expected numeric data, found {', '.join(illegal_dtypes)} instead."
+        )
+
     data = data.copy()
 
     float32_max = np.finfo(np.float32).max

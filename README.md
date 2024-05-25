@@ -33,7 +33,7 @@ pylint --disable=line-too-long,too-many-lines,no-member ltm
 pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
 ```
 
-Run tests using pytest:
+All functions not using GEE are tested in a very simple manner. Only the normal use case is represented. Functions using GEE will not be tested due to concerns regarding the authentication key. Run tests using pytest:
 ```bash
 pip install pytest
 pytest

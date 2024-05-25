@@ -139,15 +139,20 @@ def _check_band_limit(
     temporal_reducers: List[str] | None,
     num_composites: int,
 ) -> None:
-    num_bands = (
-        len(sentinel_bands)
-        if sentinel_bands is not None
-        else len(list_bands(level_2a))
-    )
-    num_bands += len(indices) if indices is not None else 0
-    num_reducers = (
-        len(temporal_reducers) if temporal_reducers is not None else 1
-    )
+    # Compute number of bands
+    if sentinel_bands is None:
+        num_bands = len(list_bands(level_2a))
+    else:
+        num_bands = len(sentinel_bands)
+
+    if indices is not None:
+        num_bands += len(indices)
+
+    # Compute number of reducers
+    if temporal_reducers is None:
+        num_reducers = 1
+    else:
+        num_reducers = len(temporal_reducers)
 
     total_bands = num_bands * num_reducers * num_composites
     if total_bands > 5000:

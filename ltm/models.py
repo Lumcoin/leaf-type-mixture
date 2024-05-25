@@ -218,19 +218,10 @@ def _target2raster(
 
 
 @typechecked
-def has_nan_error(
+def _has_nan_error(
     estimator: BaseEstimator,
 ) -> bool:
-    """Checks if an estimator raises a ValueError when predicting with NaN
-    values.
-
-    Args:
-        estimator:
-            BaseEstimator to check for NaN error.
-
-    Returns:
-        If true the estimator raises a ValueError when predicting with NaN values.
-    """
+    # Checks if estimator raises a ValueError when predicting on NaN
     try:
         estimator.fit([[0]], [0])
         estimator.predict([[np.nan]])
@@ -248,7 +239,7 @@ def _study2model(
 ) -> Pipeline:
     # Define preprocessing steps for best model
     steps = []
-    if has_nan_error(model):
+    if _has_nan_error(model):
         steps.append(("imputer", KNNImputer()))
     if study.best_params["do_standardize"]:
         steps.append(("scaler", StandardScaler()))
@@ -397,7 +388,6 @@ def bands_from_importance(
 
     # Divide bands into sentinel bands and indices
     best_bands = list(band_names[: best_idx + 1])
-    best_bands = [band.replace(" ", "_") for band in best_bands]
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
     sentinel_bands = [
@@ -451,49 +441,6 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
     scorer._score_func = mixture_score_func  # pylint: disable=protected-access
 
     return scorer
-
-
-@typechecked
-def best_scores(
-    search_results: List[RandomizedSearchCV],
-    scoring: Dict[str, _BaseScorer],
-) -> pd.DataFrame:
-    """Returns the best scores for each model.
-
-    Args:
-        search_results:
-            List of search results from hyperparameter search.
-        scoring:
-            Dictionary of scorers to use for each model.
-
-    Returns:
-        Dictionary of best scores for each model.
-    """
-    # Check if all models have different names
-    model_names = [
-        result.best_estimator_.__class__.__name__ for result in search_results
-    ]
-    if len(set(model_names)) != len(model_names):
-        raise ValueError(
-            "All models must be of different kind, as they are used as keys in the dictionary."
-        )
-
-    # Extract the scores of each metric for each model at best_index
-    df_dict = defaultdict(list)
-    for metric_name, scorer in scoring.items():
-        for result in search_results:
-            best_index = np.nonzero(
-                result.cv_results_[f"rank_test_{metric_name}"] == 1
-            )[0][0]
-            df_dict[metric_name].append(
-                result.cv_results_["mean_test_" + metric_name][best_index]
-                * scorer._sign  # pylint: disable=protected-access
-            )
-
-    # Create a new dataframe with the scores
-    df = pd.DataFrame(df_dict, index=model_names)
-
-    return df
 
 
 @typechecked
@@ -642,8 +589,7 @@ def cv_predict(
     target_path: str,
     cv: int | BaseCrossValidator | None = None,
 ) -> np.ndarray:
-    """Predicts the labels using cross_val_predict and plots the results for
-    each model.
+    """Predicts on rasters using cross_val_predict.
 
     Args:
         model:
@@ -656,7 +602,7 @@ def cv_predict(
             An integer for the number of folds or a BaseCrossValidator object for performing cross validation. Will be passed to sklearn.model_selection.cross_val_predict(). Defaults to None.
 
     Returns:
-        Tuple of ground truth image and list of predicted images.
+        A numpy raster of the prediction in the format of read() from rasterio.
     """
     # Load data and plot shape
     data = load_raster(data_path)
