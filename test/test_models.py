@@ -1,8 +1,6 @@
 import unittest
 
 import numpy as np
-import pytest
-import rasterio
 from optuna import Study
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
@@ -11,7 +9,8 @@ from sklearn.pipeline import Pipeline
 
 from ltm.models import cv_predict, hyperparam_search
 
-from .test_features import fixture_data_path, fixture_target_path
+from .test_features import fixture_data_path  # pylint: disable=unused-import
+from .test_features import fixture_target_path  # pylint: disable=unused-import
 
 
 class TestHyperparamSearch(unittest.TestCase):
