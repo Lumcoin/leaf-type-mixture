@@ -1,98 +1,47 @@
 Leaf Type Mixture
 ==============================
 
-> **Disclaimer:** This repository is still under development. The code is not yet ready for production use. The README is only a placeholder and will be updated in the future.
+> **Disclaimer:** This repository is still under development.
 
-This repository belongs to the paper ---. Thus most functions in this repository are tailored to the use case of leaf type mixture prediction. However some functions might be useful for general use cases. For example you can create a Sentinel 2 composite for a given label raster in GeoTIFF format. There are functions for reading raster data as pd.DataFrames, etc. General use cases are demonstrated in general_use_cases.ipynb.
+This repository supports the paper "Predicting Leaf Type Mixture Using Tailored Sentinel-2 Composites". We aim for all results to be reproducible. If you encounter any issues, please open an issue in this repository.
 
-All results should be reproducible, if not please create an issue.
+In this study, we explore the optimization of spectral band combinations and compositing as well as the tuning of hyperparameters for multiple common regression models to tailor Sentinel-2 Level-2A data for leaf type mixture predictions. We first identify the most important spectral bands and indices through a systematic evaluation. This involves creating composite rasters over a one-year period and assessing the importance of bands using recursive feature elimination (RFE) in conjunction with a random forest model. Subsequently, we optimize the compositing process by selecting the best temporal windows and compositing methods. The optimized dataset is used to fine-tune hyperparameters of multiple regression models to further improve performance. Our results highlight the significance of tailoring the data and model to the specific use case. At last, we evaluate the model's generalization capability across different unseen temporal windows and experimental sites. We find that the model's performance is highly dependent on the temporal window and spatial domain used for training and testing. Our results demonstrate the potential of using tailored Sentinel-2 composites for leaf type mixture predictions and provide insights into the optimization of spectral band combinations and compositing methods for this task.
 
-Requires Python>=3.10 (!)
+# Installation and Setup
 
-If you are new to python, we recommend to install [Miniconda](https://docs.conda.io/projects/miniconda/en/latest/) and create a environment called "ltm" using `conda create -n ltm python=3.10 ipykernel`. Now navigate to the folder where this repository is cloned to using the `cd [path/to/leaf-type-mixture]` (replace path within square brackets `[]`) command. You can then activate the environment using `conda activate ltm` and install the "ltm" package and its dependencies of this repository using:
+This repository requires Python 3.10 or later. To install the required packages, run the following command in the root directory of this repository:
+
 ```bash
 pip install -e .
 ```
 
-The "`.`" (dot) in above code cell is no typo, it is the path to the current directory. Then call `import ee; ee.Authenticate()` in a code cell to authenticate with Google Earth Engine.
+To use the Earth Engine API you need to authenticate. Execute the Python code below. Follow the instructions on the website and paste the authentication key into the input window. Repeat this process whenever your token expires.
 
-The code in this repository is formatted using following commands:
-```bash
-pip install isort docformatter black[jupyter]
-isort --profile black .
-docformatter --in-place --recursive .
-black --line-length 80 .
+```python
+import ee
+
+ee.Authenticate()
 ```
 
-This repository uses the [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) as a style guide for the code. If you dicover any violations, please open an issue.
+# Usage
 
-Check code quality using pylint:
+All experiments of our paper are implemented in the notebooks in the `notebooks` directory. After following the instructions for installation and setup, you can run the notebooks in your IDE of choice.
+
+# CI/CD
+
+This GitHub repository uses [GitHub Actions](https://github.com/features/actions) for a continuous integration (CI) workflow. The CI pipeline is defined in the `.github/workflows` directory. The pipeline checks the code quality of the repository with [pylint](https://pylint.readthedocs.io/) and runs tests using [pytest](https://docs.pytest.org/). Functions using GEE are not included in the tests due to concerns regarding the authentication key.
+
+If you want to run the CI workflow locally, you can use the following commands from the root directory of this repository:
 ```bash
-pip install pylint
+pip install -e .[linting,testing]
 pylint --disable=line-too-long,too-many-lines,no-member ltm
 pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
-```
-
-All functions not using GEE are tested in a very simple manner. Only the normal use case is represented. Functions using GEE will not be tested due to concerns regarding the authentication key. Run tests using pytest:
-```bash
-pip install pytest
 pytest
 ```
 
-Check test coverage using coverage.py:
+The code was formatted using following commands:
 ```bash
-pip install coverage
-coverage run -m pytest
-coverage report -m
+pip install isort black[jupyter] 
+isort --profile black .
+black .
 ```
-
-Reinstall conda environment:
-```bash
-%USERPROFILE%/mambaforge/Scripts/activate.bat
-mamba activate base
-mamba env remove -n ltm
-mamba clean -a -y
-mamba env create -f environment.yml
-```
-
-Note: Random state will be set by sklearn, if scipy >= 0.16 is available.
-
-Fix Pylance error "Import could not be resolved":
-- Press Ctrl+Shift+P
-- Select "Python: Clear Cache and Reload Window"
-
-Project Organization
-------------
-
-    ├── LICENSE
-    ├── README.md          <- The top-level README for developers using this project.
-    ├── data
-    │   ├── external       <- Data from third party sources.
-    │   ├── interim        <- Intermediate data that has been transformed.
-    │   ├── processed      <- The final, canonical data sets for modeling.
-    │   └── raw            <- The original, immutable data dump.
-    │
-    ├── models             <- Trained and serialized models, model predictions, or model summaries
-    │
-    ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
-    │                         the creator's initials, and a short `-` delimited description, e.g.
-    │                         `1.0-jqp-initial-data-exploration`.
-    │
-    ├── reports            <- Generated analysis as HTML, PDF, LaTeX, etc.
-    │   └── figures        <- Generated graphics and figures to be used in reporting
-    │
-    ├── setup.py           <- makes project pip installable (pip install -e .) so src can be imported
-    └── src                <- Source code for use in this project.
-        ├── __init__.py    <- Makes src a Python module
-        │
-        ├── data.py        <- Script to download or generate data
-        │
-        ├── features.py    <- Script to turn raw data into features for modeling
-        │
-        └── models.py      <- Scripts to train models and then use trained models to make
-                              predictions
-
-
---------
-
-<p><small>Project based on the <a target="_blank" href="https://drivendata.github.io/cookiecutter-data-science/">cookiecutter data science project template</a>. #cookiecutterdatascience</small></p>

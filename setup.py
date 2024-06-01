@@ -37,6 +37,7 @@ setup(
     extras_require={
         "linting": [
             "pylint",
+            "pytest",
         ],
         "testing": [
             "pytest",
