@@ -245,7 +245,10 @@ def _select_bands(
     _check_items(indices, list_indices(), "indices", "eemont package")
 
     # Combine bands and indices
-    bands = sentinel_bands.copy()
+    if sentinel_bands is None:
+        bands = list_bands(level_2a)
+    else:
+        bands = sentinel_bands.copy()
     if indices is not None:
         bands += indices
 
@@ -289,7 +292,13 @@ def _reduce_window(
     reduced_images = []
     for temporal_reducer in temporal_reducers:
         reducer = getattr(ee.Reducer, temporal_reducer)()
-        reduced_image = s2_window.reduce(reducer)
+        # Check if reducer is bitwise, if so, convert to integer type
+        if temporal_reducer.startswith("bitwise"):
+            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(
+                reducer
+            )
+        else:
+            reduced_image = s2_window.reduce(reducer)
 
         band_names = reduced_image.bandNames().getInfo()
         if list_reducer_bands(temporal_reducer) is None:
