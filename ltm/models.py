@@ -185,9 +185,9 @@ def _target2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = target_values
-    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
-        2, 0, 1
-    )
+    raster = raster.reshape(
+        plot_shape[1], plot_shape[2], plot_shape[0]
+    ).transpose(2, 0, 1)
 
     # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
     if area2mixture:
@@ -306,7 +306,9 @@ def _check_save_folder(
         study_path, model_path, _ = _create_paths(model, save_folder)
 
         if study_path.exists() and model_path.exists():
-            print(f"Files already exist, skipping search: {study_path}, {model_path}")
+            print(
+                f"Files already exist, skipping search: {study_path}, {model_path}"
+            )
 
             # Load best model and study
             with open(model_path, "rb") as file:
@@ -337,7 +339,9 @@ def _check_save_folder(
                 f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             )
     elif use_caching:
-        print("Warning: use_caching=True but save_folder=None, caching is disabled.")
+        print(
+            "Warning: use_caching=True but save_folder=None, caching is disabled."
+        )
 
     return None
 
@@ -392,7 +396,9 @@ def bands_from_importance(
     best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
-    sentinel_bands = [band for band in valid_sentinel_bands if band in best_bands]
+    sentinel_bands = [
+        band for band in valid_sentinel_bands if band in best_bands
+    ]
     index_bands = [band for band in valid_index_bands if band in best_bands]
 
     # Sanity check
@@ -428,8 +434,12 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
         target_pred = np.array(target_pred)
 
         # broadleaf is 0, conifer is 1
-        target_true = target_true[:, 0] / (target_true[:, 0] + target_true[:, 1])
-        target_pred = target_pred[:, 0] / (target_pred[:, 0] + target_pred[:, 1])
+        target_true = target_true[:, 0] / (
+            target_true[:, 0] + target_true[:, 1]
+        )
+        target_pred = target_pred[:, 0] / (
+            target_pred[:, 0] + target_pred[:, 1]
+        )
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
@@ -504,7 +514,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         # Save intermediate study
         if use_caching and save_folder is not None:
             with open(
-                cache_path,
+                cache_path,  # pylint: disable=possibly-used-before-assignment
                 "wb",
             ) as file:
                 dill.dump(study, file)
@@ -534,7 +544,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         }
 
         nonlocal model
-        pipe = _build_pipeline(model, do_standardize, do_pca, n_components, params)
+        pipe = _build_pipeline(
+            model, do_standardize, do_pca, n_components, params
+        )
 
         # Cross validate pipeline
         try:
@@ -565,7 +577,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         )
 
     # Optimize study
-    study.optimize(objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs)
+    study.optimize(
+        objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
+    )
 
     best_model = _study2model(study, model, data, target)
 
