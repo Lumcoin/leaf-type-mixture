@@ -1,15 +1,12 @@
-"""Functions for processing satellite data for leaf type mixture analysis.
+"""Functions for processing satellite data tailored to leaf type mixture analysis.
 
-Google Earth Engine is used to retrieve Sentinel 2 satellite images and compute
-composites. The composites are saved as GeoTIFFs. The composites can be used as
-input data for machine learning models. The labels are computed from plot data
-on the individual tree level and saved as GeoTIFFs. The labels can be used as
-target data for machine learning models.
+Google Earth Engine is used to retrieve Sentinel-2 satellite images and compute composites. The composites are saved as GeoTIFFs. The composites can be used as input data for machine learning models. The labels are computed from plot data on the individual tree level and saved as GeoTIFFs. The labels can be used as target data for machine learning models. For inference you can convert a Shapefile to a raster mask, for which you can then compute a composite.
 
 Typical usage example:
 
-    from ltm.data import compute_label, sentinel_composite
     import pandas as pd
+    from ltm.data import compute_label, sentinel_composite, shapefile2raster
+    from datetime import datetime
 
     plot = pd.read_csv("plot.csv")
 
@@ -24,7 +21,12 @@ Typical usage example:
     sentinel_composite(
         target_path_from=target_path,
         data_path_to=data_path,
-        time_window=("2020-01-01", "2020-12-31"),
+        time_window=(datetime(2020, 1, 1), datetime(2020, 12, 31)),
+    )
+
+    shapefile2raster(
+        shapefile_path="shapefile.shp",
+        raster_path="mask.tif",
     )
 """
 
@@ -57,7 +59,7 @@ CONIFER = "conifer"
 DBH = "dbh"
 LATITUDE = "latitude"
 LONGITUDE = "longitude"
-SCALE = 10  # Fine Sentinel 2 resolution in meters
+SCALE = 10  # Fine Sentinel-2 resolution in meters
 
 
 @typechecked
@@ -239,9 +241,7 @@ def _select_bands(
 ) -> ee.ImageCollection:
     # Check sentinel_bands and indices
     within_desc = "Level 2A" if level_2a else "Level 1C"
-    _check_items(
-        sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc
-    )
+    _check_items(sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc)
     _check_items(indices, list_indices(), "indices", "eemont package")
 
     # Combine bands and indices
@@ -280,9 +280,7 @@ def _reduce_window(
     s2_window: ee.ImageCollection,
     temporal_reducers: List[str] | None,
 ) -> ee.Image:
-    _check_items(
-        temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer"
-    )
+    _check_items(temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer")
 
     # Default to mean reducer
     if not temporal_reducers:
@@ -294,9 +292,7 @@ def _reduce_window(
         reducer = getattr(ee.Reducer, temporal_reducer)()
         # Check if reducer is bitwise, if so, convert to integer type
         if temporal_reducer.startswith("bitwise"):
-            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(
-                reducer
-            )
+            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(reducer)
         else:
             reduced_image = s2_window.reduce(reducer)
 
@@ -396,10 +392,13 @@ async def _async_gather(
     *coroutines: Coroutine,
     desc: str | None = None,
 ) -> list[Any]:
+    # Without tqdm
+    if len(coroutines) < 2:
+        return await asyncio.gather(*coroutines)
+
     with tqdm(total=len(coroutines), desc=desc) as pbar:
         wrapper = [
-            _wrap_coroutine(idx, coroutine)
-            for idx, coroutine in enumerate(coroutines)
+            _wrap_coroutine(idx, coroutine) for idx, coroutine in enumerate(coroutines)
         ]
         results = [None] * len(coroutines)
         for future in asyncio.as_completed(wrapper):
@@ -420,9 +419,15 @@ def _gather(
     if asynchronous:
         return asyncio.run(_async_gather(*coroutines, desc=desc))
 
+    # Create iterable
+    if len(coroutines) < 2:
+        iterable = coroutines
+    else:
+        iterable = tqdm(coroutines, desc=desc)
+
     # Run synchronously
     results = []
-    for coroutine in tqdm(coroutines, desc=desc):
+    for coroutine in iterable:
         results.append(asyncio.run(coroutine))
 
     return results
@@ -508,9 +513,7 @@ def _save_image(
     # Create batches of bands
     if batch_size is None:
         batch_size = len(bands)
-    band_batches = [
-        bands[i : i + batch_size] for i in range(0, len(bands), batch_size)
-    ]
+    band_batches = [bands[i : i + batch_size] for i in range(0, len(bands), batch_size)]
 
     # Warn user of GEE quota limits
     if len(band_batches) > 40:
@@ -520,17 +523,13 @@ def _save_image(
 
     # Get all image data using gather()
     try:
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches")
     except (aiohttp.ClientError, ValueError) as exc:
         if len(band_batches) == 1:
             raise exc
         print("Failed to download asynchroniously. Trying synchroniously...")
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches", asynchronous=False)
 
     # Combine results
@@ -652,9 +651,7 @@ def _compute_target(
     # Render plot as fine resolution image, then reduce to coarse resolution
     fine_scale = min(plot["dbh"].min() * 5, SCALE)
     if plot["dbh"].min() < 0.05:
-        print(
-            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
-        )
+        print("Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
         fine_scale = 0.25
 
     # Compute broadleaf and conifer area
@@ -665,15 +662,11 @@ def _compute_target(
     total_area = broadleaf_area.add(conifer_area)
     if area_as_target:
         target = broadleaf_area.addBands(conifer_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
+        target = target.updateMask(total_area.gt(0))  # Remove pixels with no trees
         target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
         target = conifer_area.divide(total_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
+        target = target.updateMask(total_area.gt(0))  # Remove pixels with no trees
         target = target.rename(CONIFER_PROPORTION)
 
     return target, (roi, SCALE, crs)
@@ -686,7 +679,7 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
 
     Args:
         use_buffered_reducers:
-            A boolean indicating whether to use the buffered reducers. If False the Google Earth Engine API is used to retrieve all current reducers. Defaults to True.
+            A boolean indicating whether to use the buffered reducers. If False the Google Earth Engine API is used to retrieve all current reducers (slow). Defaults to True.
 
     Returns:
         A list of strings representing the valid reducers.
@@ -758,9 +751,7 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
         except (TypeError, ee.EEException):
             continue
 
-        if all(
-            v is None or isinstance(v, Number) for v in reduced_point.values()
-        ):
+        if all(v is None or isinstance(v, Number) for v in reduced_point.values()):
             reducers.append(attr)
 
     return reducers
@@ -771,13 +762,9 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
 def list_reducer_bands(reducer: str) -> list[str] | None:
     """Lists all valid bands for a given reducer in the Earth Engine API.
 
-    Examples:
-        list_reducer_bands("mean") -> None
-        list_reducer_bands("kendallsCorrelation") -> ["tau", "p-value"]
-
     Args:
         reducer:
-            A string representing the reducer. Run data.list_reducers() for valid reducers.
+            A string representing the reducer. Run list_reducers() to get all valid reducer names.
 
     Returns:
         A list of strings representing the valid bands for the given reducer. None if the reducer does not return a multi-band image.
@@ -801,14 +788,14 @@ def list_reducer_bands(reducer: str) -> list[str] | None:
 @lru_cache
 @typechecked
 def list_bands(level_2a: bool = True) -> List[str]:
-    """Lists all valid bands in the Earth Engine API.
+    """Lists all valid Sentinel-2 bands offered by the Earth Engine API.
 
     Args:
         level_2a:
-            A boolean indicating whether to list bands from Level-2A or Level-1C Sentinel 2 data. Level-2A if True. Defaults to True.
+            A boolean indicating whether to list bands from Level-2A or Level-1C Sentinel-2 data. Level-2A if True. Defaults to True.
 
     Returns:
-        A list of strings representing the valid bands.
+        A list of strings representing the valid Sentinel-2 bands.
     """
     # Initialize Earth Engine API
     _initialize_ee()
@@ -855,8 +842,7 @@ def combine_band_name(
     reducer: str,
     reducer_band: str | None = None,
 ) -> str:
-    """Combines a composite index, band label and reducer (+ reducer band) into
-    a band name.
+    """Combines a composite index, band label and reducer (+ reducer band) into a single band name.
 
     Args:
         composite_idx:
@@ -881,17 +867,20 @@ def combine_band_name(
 
 @typechecked
 def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
-    """Splits a band name into its composite index, band label and reducer (+
-    reducer band).
+    """Splits a band name into its composite index, band label and reducer (+ reducer band).
 
     Args:
-        A string for the band name. Expects format of combine_band_name(). Other cases are not handled well.
+        A string for the band name. Expects format of combine_band_name().
 
     Returns:
-        A tuple of the composite index starting at 1, band label and reducer (+ reducer band). The formatting of list_bands(), list_reducers() and list_reducer_bands() is used.
+        A tuple of the composite index starting at 1, band label and reducer (+ reducer band). The formatting of list_bands(), list_reducers() and list_reducer_bands() is used, assuming the band_name is in the format of combine_band_name().
     """
     # Split band name
     parts = band_name.split(" ")
+    if not 3 <= len(parts) <= 4:
+        raise ValueError("Band name does not have the expected format")
+
+    # Extract parts
     composite_idx, band, reducer = parts[:3]
     reducer_band = None if len(parts) == 3 else parts[3]
 
@@ -903,19 +892,18 @@ def compute_label(
     target_path: str,
     plot: pd.DataFrame,
     area_as_target: bool = False,
-) -> str:
+) -> None:
     """Computes the label for a plot.
+
+    The resulting raster has values between 0 and 1 for the conifer proportion. 1 being fully conifer and 0 being fully broadleaf for a given raster cell. If area_as_target is True, the raster will contain the area of broadleafs and conifers in square meters per raster cell.
 
     Args:
         target_path:
-            A string representing the file path to save the raster with values between 0 and 1 for the conifer proportion.
+            A string representing the file path to save the raster. The suffix '.tif' (GeoTIFF) is expected.
         plot:
-            A pandas DataFrame containing data on a per tree basis with two columns for longitude and latitude, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively.
+            A pandas DataFrame containing data on a single tree level with one column for longitude and latitude each, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively.
         area_as_target:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a target with two bands, one for each leaf type. Defaults to False.
-
-    Returns:
-        A string representing the file path to the raster with values between 0 and 1 for the conifer proportion. 1 being fully conifer and 0 being fully broadleaf for a given raster cell.
     """
     # Initialize Earth Engine API
     _initialize_ee()
@@ -956,24 +944,113 @@ def compute_label(
     print("Computing labels...")
     _save_image(target, target_path)
 
-    return target_path
+
+@typechecked
+def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
+    target_path_from: str,
+    data_path_to: str,
+    time_window: Tuple[datetime.date, datetime.date],
+    num_composites: int = 1,
+    temporal_reducers: List[str] | None = None,
+    indices: List[str] | None = None,
+    level_2a: bool = True,
+    sentinel_bands: List[str] | None = None,
+    remove_clouds: bool = True,
+    batch_size: int | None = None,
+) -> None:
+    """Creates a composite from many Sentinel-2 satellite images for a given label image.
+
+    The raster will be saved to data_path_to after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
+
+    Args:
+        target_path_from:
+            A string representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and pixel size of the image. The suffix '.tif' (GeoTIFF) is expected.
+        data_path_to:
+            A string representing the output file path to save the composite raster. The suffix '.tif' (GeoTIFF) is expected.
+        time_window:
+            A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved. The dates are converted to milliseconds. The end date is technically excluded, but only by one millisecond.
+        num_composites:
+            An integer representing the number of composites to create within the time window. The time window will be divided into equally long composite time windows. Defaults to 1.
+        temporal_reducers:
+            A list of strings representing the temporal reducers to use when creating the composite. Run list_reducers() or see https://developers.google.com/earth-engine/guides/reducers_intro for more information. None is replaced by ['mean']. Defaults to None.
+        indices:
+            A list of strings representing the spectral indices to add to the composite as additional bands. Run list_indices() or see https://eemont.readthedocs.io/en/latest/guide/spectralIndices.html for more information.
+        level_2a:
+            A boolean indicating whether to use Level-2A or Level-1C Sentinel-2 data. Defaults to True.
+        sentinel_bands:
+            A list of strings representing the bands to use from the Sentinel-2 data. For available bands run list_bands() or see https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_HARMONIZED#bands (Level-1C) and https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#bands (Level-2A). All bands are used if None. Defaults to None.
+        remove_clouds:
+            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band. Uses MSK_CLDPRB=0 and MSK_SNWPRB=0 in addition for Level 2A images. Defaults to True.
+        batch_size:
+            An integer representing the number of bands used for one batch. All batches are process asynchronously. If None, all images are processed at once. Decrease the batch size if you hit computation limits of the Google Earth Engine. A smaller batch_size takes longer to compute. Defaults to None.
+    """
+    # Initialize Earth Engine API
+    _initialize_ee()
+    print("Preparing Sentinel-2 data...")
+
+    # Check if band limit of 5000 is exceeded
+    _check_band_limit(
+        sentinel_bands,
+        level_2a,
+        indices,
+        temporal_reducers,
+        num_composites,
+    )
+
+    # Get region of interest (ROI), scale, and coordinate reference system (CRS)
+    roi, scale, crs = _get_roi_scale_crs(target_path_from)
+
+    # Get Sentinel-2 image collection filtered by bounds
+    s2 = ee.ImageCollection(
+        "COPERNICUS/S2_SR_HARMONIZED" if level_2a else "COPERNICUS/S2_HARMONIZED"
+    )
+    s2 = s2.filterBounds(roi)
+
+    # Compute composite for each time windows
+    data = []
+    for start, end in _split_time_window(time_window, num_composites, level_2a):
+        # Filter by roi and timewindow
+        s2_window = s2.filterDate(
+            round(start.timestamp() * 1000), round(end.timestamp() * 1000)
+        )
+
+        # Compute collection with selected bands and indices
+        s2_window = _select_bands(
+            s2_window,
+            sentinel_bands,
+            indices,
+            level_2a,
+            remove_clouds,
+        )
+
+        # Add to data
+        data.append(_reduce_window(s2_window, temporal_reducers))
+
+    # Stack images
+    data = ee.ImageCollection(data).toBands()
+    data = data.clip(roi)
+    data = data.reproject(scale=scale, crs=crs)
+
+    # Prettify band names
+    data = _prettify_band_names(data)
+
+    # Save data
+    print("Computing data...")
+    _save_image(data, data_path_to, batch_size=batch_size)
 
 
 @typechecked
 def shapefile2raster(
     shapefile_path: str,
     raster_path: str,
-) -> str:
+) -> None:
     """Creates a raster mask from a shapefile.
 
     Args:
         shapefile_path:
-            A string representing the file path to the shapefile.
+            A string representing the file path to the shapefile. The suffix '.shp' is expected.
         raster_path:
-            A string representing the file path to save the raster mask. All cells partially or fully inside the shapefile will be 1 and all cells outside the shapefile will be NaN.
-
-    Returns:
-        The file path to the raster mask as a string.
+            A string representing the file path to save the raster mask. All cells partially or fully inside the shapefile will be 1 and all cells outside the shapefile will be NaN.  The suffix '.tif' (GeoTIFF) is expected.
     """
     # Initialize Earth Engine API
     _initialize_ee()
@@ -1024,107 +1101,3 @@ def shapefile2raster(
     # Save target
     print("Computing image...")
     _save_image(target, raster_path)
-
-    return raster_path
-
-
-@typechecked
-def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
-    target_path_from: str,
-    data_path_to: str,
-    time_window: Tuple[datetime.date, datetime.date],
-    num_composites: int = 1,
-    temporal_reducers: List[str] | None = None,
-    indices: List[str] | None = None,
-    level_2a: bool = True,
-    sentinel_bands: List[str] | None = None,
-    remove_clouds: bool = True,
-    batch_size: int | None = None,
-) -> str:
-    """Creates a composite from many Sentinel 2 satellite images for a given
-    label image.
-
-    The raster will be saved to 'data_path_to' after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
-
-    Args:
-        target_path_from:
-            A string representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and resolution/pixel size of the image.
-        data_path_to:
-            A string representing the output file path to save the composite raster.
-        time_window:
-            A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved. The dates are converted to milliseconds. The end date is technically exclusive, but only by one millisecond.
-        num_composites:
-            An integer representing the number of composites to create. Defaults to 1.
-        temporal_reducers:
-            A list of strings representing the temporal reducers to use when creating the composite. Run data.list_reducers() or see https://developers.google.com/earth-engine/guides/reducers_intro for more information. Defaults to ['mean'] if None.
-        indices:
-            A list of strings representing the spectral indices to add to the composite as additional bands. Run data.list_indices() or see https://eemont.readthedocs.io/en/latest/guide/spectralIndices.html for more information.
-        level_2a:
-            A boolean indicating whether to use Level-2A or Level-1C Sentinel 2 data. Defaults to True.
-        sentinel_bands:
-            A list of strings representing the bands to use from the Sentinel 2 data. For available bands run data.list_bands() or see https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_HARMONIZED#bands (Level-1C) and https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED#bands (Level-2A). All bands are used if sentinel_bands is None. Defaults to None.
-        remove_clouds:
-            A boolean indicating whether to remove clouds from the satellite images based on the QA60 band. Uses MSK_CLDPRB=0 and MSK_SNWPRB=0 for Level 2A images. Defaults to True.
-        batch_size:
-            An integer representing the number of images to process in parallel. If None, all images are processed at once. Decrease the batch size if you hit computation limits of the Google Earth Engine. A smaller batch_size takes longer to compute. Defaults to None.
-
-    Returns:
-        A string representing the file path to the composite raster.
-    """
-    # Initialize Earth Engine API
-    _initialize_ee()
-    print("Preparing Sentinel-2 data...")
-
-    # Check if band limit of 5000 is exceeded
-    _check_band_limit(
-        sentinel_bands,
-        level_2a,
-        indices,
-        temporal_reducers,
-        num_composites,
-    )
-
-    # Get region of interest (ROI), scale, and coordinate reference system (CRS)
-    roi, scale, crs = _get_roi_scale_crs(target_path_from)
-
-    # Get Sentinel 2 image collection filtered by bounds
-    s2 = ee.ImageCollection(
-        "COPERNICUS/S2_SR_HARMONIZED"
-        if level_2a
-        else "COPERNICUS/S2_HARMONIZED"
-    )
-    s2 = s2.filterBounds(roi)
-
-    # Compute composite for each time windows
-    data = []
-    for start, end in _split_time_window(time_window, num_composites, level_2a):
-        # Filter by roi and timewindow
-        s2_window = s2.filterDate(
-            round(start.timestamp() * 1000), round(end.timestamp() * 1000)
-        )
-
-        # Compute collection with selected bands and indices
-        s2_window = _select_bands(
-            s2_window,
-            sentinel_bands,
-            indices,
-            level_2a,
-            remove_clouds,
-        )
-
-        # Add to data
-        data.append(_reduce_window(s2_window, temporal_reducers))
-
-    # Stack images
-    data = ee.ImageCollection(data).toBands()
-    data = data.clip(roi)
-    data = data.reproject(scale=scale, crs=crs)
-
-    # Prettify band names
-    data = _prettify_band_names(data)
-
-    # Save data
-    print("Computing data...")
-    _save_image(data, data_path_to, batch_size=batch_size)
-
-    return data_path_to

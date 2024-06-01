@@ -6,9 +6,7 @@ def test_combine_band_name():
     band_label = "TCI_G"
     reducer = "kendallsCorrelation"
     reducer_band = "p-value"
-    combined = combine_band_name(
-        composite_idx, band_label, reducer, reducer_band
-    )
+    combined = combine_band_name(composite_idx, band_label, reducer, reducer_band)
     assert combined == "1 TCI_G kendallsCorrelation p-value"
 
 

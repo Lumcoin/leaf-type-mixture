@@ -1,6 +1,4 @@
-"""Module for visualizing raster data and creating plots.
-
-This module provides functions for visualizing raster data, creating plots from pandas DataFrames and saving them as images.
+"""Module for visualizing raster data, creating plots and saving visualizations as images.
 
 Typical usage example:
 
@@ -161,7 +159,7 @@ def show_timeseries(
     reducer: str,
     rgb_bands: List[str] | None = None,
 ) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
-    """Shows a timeseries of composites in a raster.
+    """Shows a timeseries of composites.
 
     Args:
         raster_path:

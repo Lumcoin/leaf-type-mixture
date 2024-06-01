@@ -1,10 +1,8 @@
-"""Loads, manipulates, and analyzes multi-band raster data.
-
-The data is loaded as a pandas DataFrame with band names as column names and the flattened data as rows. The data can be manipulated using the functions interpolate_data, drop_nan_rows, and dendrogram_dim_red. The data can be analyzed using the functions get_similarity_matrix, show_similarity_matrix, and show_dendrogram.
+"""Loads, manipulates, and saves multi-band raster data.
 
 Typical usage example:
 
-    from ltm.features import load_raster, interpolate_data, drop_nan_rows, save_raster, get_similarity_matrix, show_similarity_matrix, show_dendrogram, dendrogram_dim_red
+    from ltm.features import load_raster, interpolate_data, save_raster
 
     data_path = "data.tif"
     target_path = "target.tif"
@@ -13,15 +11,8 @@ Typical usage example:
     target = load_raster(target_path)
 
     data = interpolate_data(data)
-
-    similarity_matrix = get_similarity_matrix(data)
-    show_similarity_matrix(similarity_matrix)
-    show_dendrogram(similarity_matrix)
-    dendrogram_dim_red(data, similarity_matrix, threshold=0.2)
-
-    save_raster(data, data_path, "../data/processed/interpolated_data.tif")
-
-    data, target = drop_nan_rows(data, target)
+    
+    save_raster(data, data_path, "data_interpolated.tif")
 """
 
 import os
@@ -47,12 +38,11 @@ def np2pd_like(
     np_obj: np.ndarray,
     like_pd_obj: pd.Series | pd.DataFrame,
 ) -> pd.Series | pd.DataFrame:
-    """Converts a numpy array to a pandas Series or DataFrame with the same
-    column names or series name as the given pandas object.
+    """Converts a numpy array to a pandas Series or DataFrame with the same column names or series name as the given pandas object.
 
     Args:
         np_obj:
-            A numpy array of shape=(rows, columns).
+            A numpy array of shape=(rows,) for a Series or shape=(rows, columns) for a DataFrame.
         like_pd_obj:
             A pandas Series or DataFrame.
 
@@ -80,146 +70,8 @@ def np2pd_like(
 
 
 @typechecked
-def load_raster(
-    raster_path: str,
-    monochrome_as_dataframe: bool = False,
-) -> pd.DataFrame | pd.Series:
-    """Loads a raster and returns the data ready to use with sklearn and band
-    names.
-
-    Args:
-        raster_path:
-            A string representing the file path to the raster.
-        monochrome_as_dataframe:
-            A boolean representing whether to return a monochrome raster as a pandas DataFrame instead of a Series. Defaults to False.
-
-    Returns:
-        A DataFrame containing the data with band names as column names.
-    """
-    # Check if all paths are valid
-    if not raster_path.endswith(".tif"):
-        raise ValueError(
-            f"Expected path to .tif file, got '{raster_path}' instead."
-        )
-    if not os.path.exists(raster_path):
-        raise FileNotFoundError(f"Could not find file '{raster_path}'.")
-
-    with rasterio.open(raster_path) as src:
-        raster = src.read()
-        band_names = [
-            band_name if isinstance(band_name, str) else str(i)
-            for i, band_name in enumerate(src.descriptions)
-        ]
-        band_count = src.count
-        values = raster.transpose(1, 2, 0).reshape(-1, band_count)
-
-    if monochrome_as_dataframe or band_count > 1:
-        return pd.DataFrame(values, columns=band_names)
-
-    return pd.Series(values[:, 0], name=band_names[0])
-
-
-@typechecked
-def interpolate_data(
-    data: pd.DataFrame,
-    cyclic: bool = True,
-    method: str = "linear",
-    order: int | None = None,
-) -> pd.DataFrame:
-    """Interpolate missing time series values in data using the given method.
-
-    Args:
-        data:
-            A pd.DataFrame containing the data as values and band names as column names.
-        cyclic:
-            A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
-        method:
-            A string representing the method to use for interpolation. Methods 'polynomial' and 'spline' require an integer 'order' as additional argument. Defaults to 'linear'. See https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.interpolate.html
-        order:
-            An integer representing the order of the polynomial or spline interpolation. Defaults to None.
-
-    Returns:
-        A tuple of a numpy array containing the interpolated data and a list of strings representing the band names. The band names are unchanged.
-    """
-    band_names = list(data.columns)
-    values = data.values
-
-    # Get the number of composites and number of bands
-    num_composites = split_band_name(band_names[-1])[0]
-    num_bands = len(band_names) // num_composites
-
-    # Reshape into DataFrame with one row per composite
-    reshaped = values.reshape(-1, num_composites, num_bands)
-    reshaped = reshaped.transpose(0, 2, 1)
-    reshaped = reshaped.reshape(-1, num_composites).T
-    df = pd.DataFrame(reshaped)
-
-    # Interpolate
-    if cyclic:
-        df = pd.concat([df] * 3, ignore_index=True)
-    df.interpolate(method=method, inplace=True, order=order)
-    if cyclic:
-        start = len(df) // 3
-        end = 2 * len(df) // 3
-        df = df.iloc[start:end].reset_index(drop=True)
-
-    # Reshape back into original shape
-    interpolated_data = df.values.T.reshape(-1, num_bands, num_composites)
-    interpolated_data = interpolated_data.transpose(0, 2, 1)
-    interpolated_data = interpolated_data.reshape(
-        -1, num_bands * num_composites
-    )
-
-    interpolated_data = pd.DataFrame(interpolated_data, columns=band_names)
-
-    return interpolated_data
-
-
-@typechecked
-def save_raster(
-    data: pd.DataFrame,
-    source_path: str,
-    destination_path: str,
-) -> str:
-    """Saves the data as a raster image.
-
-    Args:
-        data:
-            A pandas DataFrame containing the data. The column names are used as band names.
-        source_path:
-            A string of the file path to the source image. Used for copying the raster profile.
-        destination_path:
-            A string of the file path to the destination image.
-
-    Returns:
-        A string of the file path to the destination image.
-    """
-    # Copy data
-    data_values = data.values.copy()
-
-    # Read raster profile and shape
-    with rasterio.open(source_path) as raster:
-        profile = dict(raster.profile)
-        profile["count"] = len(data.columns)
-        shape = raster.read().shape
-
-    # Reshape data
-    data_values = data_values.reshape(
-        shape[1], shape[2], len(data.columns)
-    ).transpose(2, 0, 1)
-
-    # Write raster
-    with rasterio.open(destination_path, "w", **profile) as dst:
-        dst.write(data_values)
-        dst.descriptions = list(data)
-
-    return destination_path
-
-
-@typechecked
 def to_float32(data: pd.DataFrame) -> pd.DataFrame:
-    """Converts the data to float32 and replaces infinities with the maximum
-    and minimum float32 values.
+    """Converts the data to float32 and replaces infinities with the maximum and minimum float32 values.
 
     Args:
         data:
@@ -248,6 +100,138 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
     data = data.astype(np.float32)
 
     return data
+
+
+@typechecked
+def interpolate_data(
+    data: pd.DataFrame,
+    cyclic: bool = True,
+    method: str = "linear",
+    order: int | None = None,
+) -> pd.DataFrame:
+    """Interpolate missing time series values in data using the given method.
+
+    Args:
+        data:
+            A pd.DataFrame containing the data as values and band names as column names.
+        cyclic:
+            A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
+        method:
+            A string representing the method to use for interpolation. Methods 'polynomial' and 'spline' require an integer 'order' as additional argument. Defaults to 'linear'. See https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.interpolate.html
+        order:
+            An integer representing the order of the polynomial or spline interpolation. Defaults to None.
+
+    Returns:
+        A dataframe containing the interpolated data.
+    """
+    # Return if no NaN values found
+    if not data.isna().values.any():
+        return data
+
+    # Separate band names and values
+    band_names = list(data.columns)
+    values = data.values
+
+    # Get the number of composites and number of bands
+    num_composites = split_band_name(band_names[-1])[0]
+    num_bands = len(band_names) // num_composites
+
+    # Reshape into DataFrame with one row per composite
+    reshaped = values.reshape(-1, num_composites, num_bands)
+    reshaped = reshaped.transpose(0, 2, 1)
+    reshaped = reshaped.reshape(-1, num_composites).T
+    df = pd.DataFrame(reshaped)
+
+    # Interpolate
+    if cyclic:
+        df = pd.concat([df] * 3, ignore_index=True)
+    df.interpolate(method=method, inplace=True, order=order)
+    if cyclic:
+        start = len(df) // 3
+        end = 2 * len(df) // 3
+        df = df.iloc[start:end].reset_index(drop=True)
+
+    # Reshape back into original shape
+    interpolated_data = df.values.T.reshape(-1, num_bands, num_composites)
+    interpolated_data = interpolated_data.transpose(0, 2, 1)
+    interpolated_data = interpolated_data.reshape(-1, num_bands * num_composites)
+
+    interpolated_data = pd.DataFrame(interpolated_data, columns=band_names)
+
+    return interpolated_data
+
+
+@typechecked
+def load_raster(
+    raster_path: str,
+    monochrome_as_dataframe: bool = False,
+) -> pd.DataFrame | pd.Series:
+    """Loads a raster and returns the data ready to use with sklearn.
+
+    Args:
+        raster_path:
+            A string representing the file path to the raster. The suffix '.tif' (GeoTIFF) is expected.
+        monochrome_as_dataframe:
+            A boolean representing whether to return a monochrome raster as a pandas DataFrame instead of a Series. Defaults to False.
+
+    Returns:
+        A DataFrame containing the data with band names as column names. If the raster is monochrome and 'monochrome_as_dataframe' is False, a Series is returned instead. This is expected by sklearn.
+    """
+    # Check if all paths are valid
+    if not raster_path.endswith(".tif"):
+        raise ValueError(f"Expected path to .tif file, got '{raster_path}' instead.")
+    if not os.path.exists(raster_path):
+        raise FileNotFoundError(f"Could not find file '{raster_path}'.")
+
+    with rasterio.open(raster_path) as src:
+        raster = src.read()
+        band_names = [
+            band_name if isinstance(band_name, str) else str(i)
+            for i, band_name in enumerate(src.descriptions)
+        ]
+        band_count = src.count
+        values = raster.transpose(1, 2, 0).reshape(-1, band_count)
+
+    if monochrome_as_dataframe or band_count > 1:
+        return pd.DataFrame(values, columns=band_names)
+
+    return pd.Series(values[:, 0], name=band_names[0])
+
+
+@typechecked
+def save_raster(
+    data: pd.DataFrame,
+    source_path: str,
+    destination_path: str,
+) -> None:
+    """Saves the data as a raster image.
+
+    Args:
+        data:
+            A pandas DataFrame containing the data. The column names are used as band names.
+        source_path:
+            A string of the file path to the source image. Used for copying the raster profile.
+        destination_path:
+            A string of the file path to the destination image.
+    """
+    # Copy data
+    data_values = data.values.copy()
+
+    # Read raster profile and shape
+    with rasterio.open(source_path) as raster:
+        profile = dict(raster.profile)
+        profile["count"] = len(data.columns)
+        shape = raster.read().shape
+
+    # Reshape data
+    data_values = data_values.reshape(shape[1], shape[2], len(data.columns)).transpose(
+        2, 0, 1
+    )
+
+    # Write raster
+    with rasterio.open(destination_path, "w", **profile) as dst:
+        dst.write(data_values)
+        dst.descriptions = list(data)
 
 
 @typechecked
@@ -358,9 +342,7 @@ def show_similarity_matrix(
             similarity_matrix.columns.shape[0] * 0.3,
         )
     )
-    image = ax.imshow(
-        similarity_matrix, interpolation="nearest", vmin=0, vmax=1
-    )
+    image = ax.imshow(similarity_matrix, interpolation="nearest", vmin=0, vmax=1)
     fig.colorbar(image)
     ax.set_xticks(range(similarity_matrix.columns.shape[0]))
     ax.set_yticks(range(similarity_matrix.columns.shape[0]))
@@ -439,9 +421,7 @@ def dendrogram_dim_red(
     dist_linkage = hierarchy.ward(squareform(distance_matrix))
 
     # Compute clusters
-    cluster_ids = hierarchy.fcluster(
-        dist_linkage, threshold, criterion="distance"
-    )
+    cluster_ids = hierarchy.fcluster(dist_linkage, threshold, criterion="distance")
     cluster_id_to_band_ids = defaultdict(list)
     for idx, cluster_id in enumerate(cluster_ids):
         cluster_id_to_band_ids[cluster_id].append(idx)

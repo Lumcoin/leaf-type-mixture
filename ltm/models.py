@@ -1,42 +1,29 @@
-"""Performs hyperparameter search for multiple models and evaluates the best
-model.
-
-Searches for the best hyperparameters for multiple models using randomized search The search results can be used to compare the performance of different models. The model performance can be compared visually using cv_predict().
+"""Performs hyperparameter search using Optuna and offers cross-validated inference on raster data.
 
 Typical usage example:
 
-    from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
-    from sklearn.metrics import make_scorer, mean_absolute_error, mean_squared_error
+    from ltm.features import load_raster
+    from ltm.models import hyperparam_search
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import make_scorer, root_mean_squared_error
 
-    data, band_names = load_multi_band_raster("data.tif")
-    target, _ = load_multi_band_raster("target.tif")
-    data, target = drop_nan_rows(data, target)
+    def suggest_categorical(*args, **kwargs):
+        return "suggest_categorical", args, kwargs
 
-    search_space = {
-        RandomForestRegressor(): {
-            "n_estimators": [100, 200, 300],
-        },
-        ExtraTreesRegressor(): {
-            "max_depth": [5, 10, 15],
-        },
-    }
+    model = RandomForestRegressor()
+    search_space = [suggest_categorical("n_estimators", [100, 200, 300])]
+    scorer = make_scorer(root_mean_squared_error, greater_is_better=False)
 
-    scorers = {
-        "mse": make_scorer(mean_squared_error, greater_is_better=False),
-        "mae": make_scorer(mean_absolute_error, greater_is_better=False),
-    }
+    data = load_raster("data_interpolated.tif")
+    target = load_raster("target.tif")
+    data, target = data[target.notna()], target[target.notna()]
 
-    # Perform hyperparameter search
-    search_results = hyperparam_search(data, target, search_space, scorers, refit="r2")
-
-    score_df = best_scores(search_results, scorers)
-
-    cv_predict(
-        search_results,
-        data_path,
-        target_path,
-        rgb_bands=["B4", "B3", "B2"],
-        random_state=42,
+    best_model, study = hyperparam_search(
+        model,
+        search_space,
+        data,
+        target,
+        scorer,
     )
 """
 
@@ -198,9 +185,9 @@ def _target2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = target_values
-    raster = raster.reshape(
-        plot_shape[1], plot_shape[2], plot_shape[0]
-    ).transpose(2, 0, 1)
+    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
+        2, 0, 1
+    )
 
     # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
     if area2mixture:
@@ -319,9 +306,7 @@ def _check_save_folder(
         study_path, model_path, _ = _create_paths(model, save_folder)
 
         if study_path.exists() and model_path.exists():
-            print(
-                f"Files already exist, skipping search: {study_path}, {model_path}"
-            )
+            print(f"Files already exist, skipping search: {study_path}, {model_path}")
 
             # Load best model and study
             with open(model_path, "rb") as file:
@@ -352,9 +337,7 @@ def _check_save_folder(
                 f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             )
     elif use_caching:
-        print(
-            "Warning: use_caching=True but save_folder=None, caching is disabled."
-        )
+        print("Warning: use_caching=True but save_folder=None, caching is disabled.")
 
     return None
 
@@ -381,21 +364,20 @@ def bands_from_importance(
     top_n: int = 30,
     level_2a: bool = True,
 ) -> Tuple[List[str], List[str]]:
-    """Extracts the band names of sentinel bands and indices from the band
-    importance file.
+    """Extracts the band names of Sentinel-2 bands and indices from the band importance file.
 
-    The last band with an optimum in one of the scores is interpreted as the last band to be kept. All bands after this band are removed. The bands are then divided into sentinel bands and indices.
+    The top_n bands are read from the band importance file. Those bands are then divided into Sentinel-2 bands and indices.
 
     Args:
         band_importance_path:
-            Path to the file with band names and their scores.
+            Path to the file with band names and their scores. The bands are expected to be in reverse order of when they were removed by RFE. Only the band names and their order are used.
         top_n:
-            Number of top bands to keep. Defaults to 30.
+            Number of bands to keep. Defaults to 30.
         level_2a:
-            Whether the band importance file is from a level 2A dataset. Defaults to True.
+            Whether the band importance file is from a level 2A dataset. This is necessary for distinguishing Sentinel-2 bands from indices. Defaults to True.
 
     Returns:
-        Tuple of lists of sentinel band names and index names.
+        Tuple of lists of Sentinel-2 band names and index names as strings.
     """
     # Check path
     if not Path(band_importance_path).exists():
@@ -406,19 +388,17 @@ def bands_from_importance(
     band_names = df.index
     df = df.reset_index()
 
-    # Divide bands into sentinel bands and indices
+    # Divide bands into Sentinel-2 bands and indices
     best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
-    sentinel_bands = [
-        band for band in valid_sentinel_bands if band in best_bands
-    ]
+    sentinel_bands = [band for band in valid_sentinel_bands if band in best_bands]
     index_bands = [band for band in valid_index_bands if band in best_bands]
 
     # Sanity check
     if len(sentinel_bands) + len(index_bands) != len(best_bands):
         raise ValueError(
-            "The sum of sentinel bands and index bands does not equal the number of best bands. This should not happen..."
+            "The sum of Sentinel-2 bands and index bands does not equal the number of best bands. This should not happen..."
         )
 
     return sentinel_bands, index_bands
@@ -426,8 +406,7 @@ def bands_from_importance(
 
 @typechecked
 def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
-    """Modifies the score function of a scorer to use the computed leaf type
-    mixture from leaf type areas.
+    """Modifies the score function of a scorer to use the leaf type mixture calculated from leaf type areas.
 
     Args:
         scorer:
@@ -449,12 +428,8 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
         target_pred = np.array(target_pred)
 
         # broadleaf is 0, conifer is 1
-        target_true = target_true[:, 0] / (
-            target_true[:, 0] + target_true[:, 1]
-        )
-        target_pred = target_pred[:, 0] / (
-            target_pred[:, 0] + target_pred[:, 1]
-        )
+        target_true = target_true[:, 0] / (target_true[:, 0] + target_true[:, 1])
+        target_pred = target_pred[:, 0] / (target_pred[:, 0] + target_pred[:, 1])
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
@@ -478,9 +453,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     use_caching: bool = True,
     always_standardize: bool = False,
 ) -> Tuple[Pipeline, optuna.study.Study]:
-    """Performs hyperparameter search for a model using optuna.
+    """Performs hyperparameter search for a model using Optuna.
 
-    The search space will be explored using optuna's TPE sampler, together with standardization and PCA for preprocessing. The first trial is the model with its default parameter values. The best pipeline will be returned along with the optuna study. A KNNImputer is used for estimators not supporting NaN values.
+    The search space will be explored using Optuna's TPE sampler, together with standardization and PCA for preprocessing. The best pipeline object will be returned along with the Optuna study. A KNNImputer is used for estimators not supporting NaN values.
 
     Args:
         model:
@@ -496,9 +471,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         cv:
             Number of folds or BaseCrossValidator instance to use for cross validation. Defaults to 5.
         n_trials:
-            Number of trials to perform for hyperparameter search. Defaults to 100.
+            Number of trials to perform hyperparameter search. Defaults to 100.
         n_jobs:
-            Number of jobs to use for hyperparameter search. Set it to -1 to maximize parallelization.  Defaults to 1, as otherwise optuna becomes non-deterministic.
+            Number of jobs to use for hyperparameter search. Set it to -1 to maximize parallelization.  Defaults to 1, as otherwise Optuna becomes non-deterministic.
         random_state:
             Integer to be used as random state for reproducible results. Defaults to None.
         save_folder:
@@ -506,10 +481,10 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         use_caching:
             Whether to use caching for the search. Saves a [model]_cache.pkl for each step and resumes if a cache exists. The cache is deleted after the final study is saved. Defaults to True.
         always_standardize:
-            Whether to always standardize the data. Recommended for SVM based estimators. Defaults to False.
+            If true the data is always standardized. Recommended for SVM based estimators. Defaults to False.
 
     Returns:
-        Tuple of the best pipeline and the optuna study.
+        Tuple of the best pipeline and the Optuna study.
     """
     result = _check_save_folder(
         model,
@@ -529,7 +504,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         # Save intermediate study
         if use_caching and save_folder is not None:
             with open(
-                cache_path,  # pylint: disable=possibly-used-before-assignment
+                cache_path,
                 "wb",
             ) as file:
                 dill.dump(study, file)
@@ -559,9 +534,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         }
 
         nonlocal model
-        pipe = _build_pipeline(
-            model, do_standardize, do_pca, n_components, params
-        )
+        pipe = _build_pipeline(model, do_standardize, do_pca, n_components, params)
 
         # Cross validate pipeline
         try:
@@ -592,9 +565,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         )
 
     # Optimize study
-    study.optimize(
-        objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
-    )
+    study.optimize(objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs)
 
     best_model = _study2model(study, model, data, target)
 
