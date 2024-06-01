@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 setup(
     name="ltm",
     packages=find_packages(),
-    version="1.0.0",
+    version="0.1.0",
     description="Predicting leaf type mixture using tailored sentinel-2 composites.",
     author="Peter Hofinger",
     license="MIT",
