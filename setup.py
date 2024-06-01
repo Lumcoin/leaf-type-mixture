@@ -1,11 +1,12 @@
 # pylint: disable=missing-module-docstring
+# https://packaging.python.org/en/latest/guides/tool-recommendations/
 from setuptools import find_packages, setup
 
 setup(
     name="ltm",
     packages=find_packages(),
     version="0.1.0",
-    description="Predicting leaf type mixture using tailored sentinel-2 composites.",
+    description="Leaf type mixture prediction with machine learning from satellite data.",
     author="Peter Hofinger",
     license="MIT",
     install_requires=[
