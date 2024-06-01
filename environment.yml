@@ -1,7 +1,7 @@
 # mamba activate base
 # mamba remove -n ltm --all
 # mamba clean --all -y
-# mamba create -y -n ltm python=3.10 ipykernel
+# mamba create -y -n ltm python=3.10
 # mamba activate ltm
 # pip install -e .
 name: ltm
