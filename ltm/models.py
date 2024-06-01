@@ -229,6 +229,32 @@ def _has_nan_error(
 
 
 @typechecked
+def _build_pipeline(
+    model: BaseEstimator,
+    do_standardize: bool,
+    do_pca: bool,
+    n_components: int | None,
+    model_params: Dict[str, Any],
+) -> Pipeline:
+    # Set params first, as it can change _has_nan_error
+    model = model.set_params(**model_params)
+
+    steps = []
+    if _has_nan_error(model) or do_pca:
+        steps.append(("imputer", KNNImputer()))
+    if do_standardize:
+        steps.append(("scaler", StandardScaler()))
+    if do_pca:
+        if n_components is None:
+            raise ValueError("n_components must be set if do_pca is True.")
+        steps.append(("pca", PCA(n_components=n_components)))
+
+    steps.append(("model", model))
+
+    return Pipeline(steps=steps)
+
+
+@typechecked
 def _study2model(
     study: optuna.study.Study,
     model: BaseEstimator,
@@ -236,27 +262,23 @@ def _study2model(
     target: npt.ArrayLike,
 ) -> Pipeline:
     # Define preprocessing steps for best model
-    steps = []
-    if _has_nan_error(model):
-        steps.append(("imputer", KNNImputer()))
-    if study.best_params["do_standardize"]:
-        steps.append(("scaler", StandardScaler()))
-    if study.best_params["do_pca"]:
-        steps.append(
-            ("pca", PCA(n_components=study.best_params["n_components"]))
-        )
-
-    # Define model step
     model_params = {
         param: value
         for param, value in study.best_params.items()
         if param not in ["do_standardize", "do_pca", "n_components"]
     }
-    model = model.set_params(**model_params)
 
-    # Create best model
-    steps.append(("model", model))
-    best_model = Pipeline(steps=steps)
+    n_components = None
+    if study.best_params["do_pca"]:
+        n_components = study.best_params["n_components"]
+
+    best_model = _build_pipeline(
+        model,
+        study.best_params["do_standardize"],
+        study.best_params["do_pca"],
+        n_components,
+        model_params,
+    )
 
     # Fit best model
     best_model.fit(data, target)
@@ -356,6 +378,7 @@ def _save_study_model(
 @typechecked
 def bands_from_importance(
     band_importance_path: str,
+    top_n: int = 30,
     level_2a: bool = True,
 ) -> Tuple[List[str], List[str]]:
     """Extracts the band names of sentinel bands and indices from the band
@@ -366,6 +389,8 @@ def bands_from_importance(
     Args:
         band_importance_path:
             Path to the file with band names and their scores.
+        top_n:
+            Number of top bands to keep. Defaults to 30.
         level_2a:
             Whether the band importance file is from a level 2A dataset. Defaults to True.
 
@@ -381,11 +406,8 @@ def bands_from_importance(
     band_names = df.index
     df = df.reset_index()
 
-    # Find band with minimum
-    best_idx = int(df["Root Mean Squared Error"].idxmin())
-
     # Divide bands into sentinel bands and indices
-    best_bands = list(band_names[: best_idx + 1])
+    best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
     sentinel_bands = [
@@ -454,6 +476,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     random_state: int | None = None,
     save_folder: str | None = None,
     use_caching: bool = True,
+    always_standardize: bool = False,
 ) -> Tuple[Pipeline, optuna.study.Study]:
     """Performs hyperparameter search for a model using optuna.
 
@@ -482,6 +505,11 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
             Folder to save the study PKL and model PKL to. Uses model.__class__.__name__ to name the files. Skips search if files already exist. Defaults to None.
         use_caching:
             Whether to use caching for the search. Saves a [model]_cache.pkl for each step and resumes if a cache exists. The cache is deleted after the final study is saved. Defaults to True.
+        always_standardize:
+            Whether to always standardize the data. Recommended for SVM based estimators. Defaults to False.
+
+    Returns:
+        Tuple of the best pipeline and the optuna study.
     """
     result = _check_save_folder(
         model,
@@ -508,34 +536,34 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
 
     def objective(trial):
         # Choose whether to standardize and apply PCA
+        standardize_options = [True, False]
+        if always_standardize:
+            standardize_options = [True]
         do_standardize = trial.suggest_categorical(
-            "do_standardize", [True, False]
+            "do_standardize", standardize_options
         )
         do_pca = trial.suggest_categorical("do_pca", [True, False])
 
-        # Define pipeline steps
-        steps = []
-        if do_standardize:
-            steps.append(("scaler", StandardScaler()))
+        # Build pipeline
+        n_components = None
         if do_pca:
             n_splits = cv if isinstance(cv, int) else cv.get_n_splits()
             max_components = min(data.shape) - np.ceil(
                 min(data.shape) / n_splits
             ).astype(int)
             n_components = trial.suggest_int("n_components", 1, max_components)
-            steps.append(("pca", PCA(n_components=n_components)))
 
-        # Define model step
-        nonlocal model
         params = {
             args[0]: getattr(trial, name)(*args, **kwargs)
             for name, args, kwargs in search_space
         }
-        model = model.set_params(**params)
-        steps.append(("model", model))
+
+        nonlocal model
+        pipe = _build_pipeline(
+            model, do_standardize, do_pca, n_components, params
+        )
 
         # Cross validate pipeline
-        pipe = Pipeline(steps=steps)
         try:
             cv_results = cross_validate(
                 pipe, data, target, cv=cv, scoring=scorer, n_jobs=-1
