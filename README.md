@@ -41,7 +41,7 @@ pytest
 
 The code was formatted using following commands:
 ```bash
-pip install isort black[jupyter] 
+pip install isort black[jupyter]
 isort --profile black .
 black .
 ```
