@@ -9,14 +9,10 @@ Welcome to the repository for the paper "Predicting Leaf Type Mixture Using Tail
 
 In this study, we focus on optimizing spectral band combinations, compositing methods, and hyperparameters for various regression models to enhance Sentinel-2 Level-2A data for predicting leaf type mixtures. The experiments are broken down into:
 
-1. Identifying Important Spectral Bands and Indices:
-   - We conduct a systematic evaluation using recursive feature elimination (RFE) with a random forest model to identify significant bands.
-2. Optimizing the Compositing Process:
-   - The best temporal windows and compositing methods are selected to refine the dataset.
-3. Fine-Tuning Regression Models:
-   - Hyperparameters for multiple regression models are optimized to improve performance.
-4. Evaluate the Generalization Capability:
-   - We evaluate the best model's generalization capability across unseen temporal windows and experimental sites.
+1. **Band Importance**: We conduct a systematic evaluation using recursive feature elimination (RFE) with a random forest model to identify significant bands and indices.
+2. **Compositing**: The best temporal windows and compositing methods are selected to refine the dataset.
+3. **Hyperparameter Tuning**: Hyperparameters for multiple regression models are optimized to improve performance.
+4. **Generalization**: We evaluate the best model's generalization capability across unseen temporal windows and experimental sites.
 
 Our results highlight the potential of tailored Sentinel-2 composites for leaf type mixture predictions and provide insights into optimizing spectral band combinations and compositing methods.
 
