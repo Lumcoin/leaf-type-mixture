@@ -3,9 +3,22 @@ Leaf Type Mixture
 
 > **Disclaimer:** This repository is still under development.
 
-This repository supports the paper "Predicting Leaf Type Mixture Using Tailored Sentinel-2 Composites". We aim for all results to be reproducible. If you encounter any issues, please open an issue in this repository.
+Welcome to the repository for the paper "Predicting Leaf Type Mixture Using Tailored Sentinel-2 Composites." Our goal is to ensure all results are reproducible. If you encounter any issues, please open an issue in this repository.
 
-In this study, we explore the optimization of spectral band combinations and compositing as well as the tuning of hyperparameters for multiple common regression models to tailor Sentinel-2 Level-2A data for leaf type mixture predictions. We first identify the most important spectral bands and indices through a systematic evaluation. This involves creating composite rasters over a one-year period and assessing the importance of bands using recursive feature elimination (RFE) in conjunction with a random forest model. Subsequently, we optimize the compositing process by selecting the best temporal windows and compositing methods. The optimized dataset is used to fine-tune hyperparameters of multiple regression models to further improve performance. Our results highlight the significance of tailoring the data and model to the specific use case. At last, we evaluate the model's generalization capability across different unseen temporal windows and experimental sites. We find that the model's performance is highly dependent on the temporal window and spatial domain used for training and testing. Our results demonstrate the potential of using tailored Sentinel-2 composites for leaf type mixture predictions and provide insights into the optimization of spectral band combinations and compositing methods for this task.
+# Overview
+
+In this study, we focus on optimizing spectral band combinations, compositing methods, and hyperparameters for various regression models to enhance Sentinel-2 Level-2A data for predicting leaf type mixtures. The experiments are broken down into:
+
+1. Identifying Important Spectral Bands and Indices:
+   - We conduct a systematic evaluation using recursive feature elimination (RFE) with a random forest model to identify significant bands.
+2. Optimizing the Compositing Process:
+   - The best temporal windows and compositing methods are selected to refine the dataset.
+3. Fine-Tuning Regression Models:
+   - Hyperparameters for multiple regression models are optimized to improve performance.
+4. Evaluate the Generalization Capability:
+   - We evaluate the best model's generalization capability across unseen temporal windows and experimental sites.
+
+Our results highlight the potential of tailored Sentinel-2 composites for leaf type mixture predictions and provide insights into optimizing spectral band combinations and compositing methods.
 
 # Installation and Setup
 
@@ -15,7 +28,7 @@ This repository requires Python 3.10 or later. To install the required packages,
 pip install -e .
 ```
 
-To use the Earth Engine API you need to authenticate. Execute the Python code below. Follow the instructions on the website and paste the authentication key into the input window. Repeat this process whenever your token expires.
+To use the Earth Engine API, authenticate with the following Python code. Follow the website instructions and paste the authentication key into the input window. Repeat this process whenever your token expires.
 
 ```python
 import ee
@@ -25,13 +38,17 @@ ee.Authenticate()
 
 # Usage
 
-All experiments of our paper are implemented in the notebooks in the `notebooks` directory. After following the instructions for installation and setup, you can run the notebooks in your IDE of choice.
+All experiments described in our paper are implemented in the notebooks within the `notebooks` directory. After completing the installation and setup, you can run these notebooks in your preferred IDE.
 
 # CI/CD
 
-This GitHub repository uses [GitHub Actions](https://github.com/features/actions) for a continuous integration (CI) workflow. The CI pipeline is defined in the `.github/workflows` directory. The pipeline checks the code quality of the repository with [pylint](https://pylint.readthedocs.io/) and runs tests using [pytest](https://docs.pytest.org/). Functions using GEE are not included in the tests due to concerns regarding the authentication key.
+This GitHub repository uses [GitHub Actions](https://github.com/features/actions) for continuous integration (CI). The CI pipeline is defined in the `.github/workflows` directory. It includes:
+- **Code Quality Checks** using [pylint](https://pylint.readthedocs.io/)
+- **Testing** using [pytest](https://docs.pytest.org/).
 
-If you want to run the CI workflow locally, you can use the following commands from the root directory of this repository:
+> Note: Functions using the GEE API are excluded from the tests due to authentication concerns.
+
+To run the CI workflow locally, execute the following commands from the repository directory:
 ```bash
 pip install -e .[linting,testing]
 pylint --disable=line-too-long,too-many-lines,no-member ltm
@@ -39,7 +56,7 @@ pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring
 pytest
 ```
 
-The code was formatted using following commands:
+The code was formatted using the following commands:
 ```bash
 pip install isort black[jupyter]
 isort --profile black .
