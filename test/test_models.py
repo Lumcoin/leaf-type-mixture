@@ -15,9 +15,7 @@ from .test_features import fixture_target_path  # pylint: disable=unused-import
 
 class TestHyperparamSearch(unittest.TestCase):
     def setUp(self):
-        regression = make_regression(
-            n_samples=100, n_features=10, random_state=42
-        )
+        regression = make_regression(n_samples=100, n_features=10, random_state=42)
         self.data, self.target = (  # pylint: disable=unbalanced-tuple-unpacking
             regression
         )
@@ -36,9 +34,7 @@ class TestHyperparamSearch(unittest.TestCase):
             suggest_categorical("ufunc", ["tanh", "sigm", "relu", "lin"]),
             suggest_float("density", 0.01, 0.99),
         ]
-        self.scorer = make_scorer(
-            root_mean_squared_error, greater_is_better=False
-        )
+        self.scorer = make_scorer(root_mean_squared_error, greater_is_better=False)
         self.refit = "mean_squared_error"
 
     def test_hyperparam_search(self):
@@ -76,9 +72,7 @@ class TestHyperparamSearch(unittest.TestCase):
             random_state=42,
         )
         self.assertEqual(elm_study1.best_params, elm_study2.best_params)
-        self.assertEqual(
-            elm_model1[-1].get_params(), elm_model2[-1].get_params()
-        )
+        self.assertEqual(elm_model1[-1].get_params(), elm_model2[-1].get_params())
 
 
 def test_cv_predict(data_path, target_path):

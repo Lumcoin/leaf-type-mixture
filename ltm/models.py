@@ -27,7 +27,9 @@ Typical usage example:
     )
 """
 
+from datetime import datetime
 from pathlib import Path
+from time import sleep
 from typing import Any, Callable, Dict, Iterator, List, Tuple
 
 import dill
@@ -48,10 +50,23 @@ from sklearn.model_selection import (
 )
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
+from tqdm.notebook import tqdm
 from typeguard import typechecked
 
-from ltm.data import BROADLEAF_AREA, CONIFER_AREA, list_bands, list_indices
-from ltm.features import load_raster, np2pd_like
+from ltm.data import (
+    BROADLEAF_AREA,
+    CONIFER_AREA,
+    list_bands,
+    list_indices,
+    sentinel_composite,
+)
+from ltm.features import (
+    interpolate_data,
+    load_raster,
+    np2pd_like,
+    save_raster,
+    to_float32,
+)
 
 
 @typechecked
@@ -185,9 +200,9 @@ def _target2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = target_values
-    raster = raster.reshape(
-        plot_shape[1], plot_shape[2], plot_shape[0]
-    ).transpose(2, 0, 1)
+    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
+        2, 0, 1
+    )
 
     # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
     if area2mixture:
@@ -306,9 +321,7 @@ def _check_save_folder(
         study_path, model_path, _ = _create_paths(model, save_folder)
 
         if study_path.exists() and model_path.exists():
-            print(
-                f"Files already exist, skipping search: {study_path}, {model_path}"
-            )
+            print(f"Files already exist, skipping search: {study_path}, {model_path}")
 
             # Load best model and study
             with open(model_path, "rb") as file:
@@ -339,9 +352,7 @@ def _check_save_folder(
                 f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             )
     elif use_caching:
-        print(
-            "Warning: use_caching=True but save_folder=None, caching is disabled."
-        )
+        print("Warning: use_caching=True but save_folder=None, caching is disabled.")
 
     return None
 
@@ -360,6 +371,84 @@ def _save_study_model(
     # Save best model
     with open(model_path, "wb") as file:
         dill.dump(best_model, file)
+
+
+@typechecked
+def _get_composite_params() -> Dict[str, int]:
+    compositing_path = "../reports/compositing.csv"
+
+    try:
+        df = pd.read_csv(compositing_path)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"File {compositing_path} not found. Please run the compositing notebook first."
+        ) from exc
+
+    metric = "Root Mean Squared Error"
+
+    optimal_idx = df.groupby("Reducer")[metric].idxmin()
+    optimal_df = df.loc[optimal_idx]
+    optimal_df = optimal_df.set_index("Reducer")
+
+    composite_dict = optimal_df["Composites"].to_dict()
+
+    # Sort alphabetically
+    composite_dict = dict(sorted(composite_dict.items(), key=lambda x: x[0]))
+
+    return composite_dict
+
+
+@typechecked
+def _create_composites(
+    year: int,
+    data_folder: str,
+    target_path: str,
+    batch_size: int | None = None,
+) -> None:
+    stem = Path(data_folder).stem
+
+    # Get selected bands and indices
+    importance_path = "../reports/band_importance.csv"
+    if Path(importance_path).exists():
+        sentinel_bands, indices = bands_from_importance(importance_path)
+    else:
+        raise FileNotFoundError(
+            f"File {importance_path} not found. Please run the band importance notebook first."
+        )
+
+    # Get composites by most composites first
+    composite_dict = _get_composite_params()
+    composite_dict = dict(
+        sorted(composite_dict.items(), key=lambda item: item[1], reverse=True)
+    )
+
+    # Create one composite for each reducer
+    iterable = tqdm(composite_dict.items(), desc=f"Downloading Composites for {year}")
+    for reducer, num_composites in iterable:
+        composite_path = str(
+            Path(data_folder) / f"{year}/{stem}_{reducer}_{num_composites}.tif"
+        )
+
+        sleep_time = 60
+        while not Path(composite_path).exists():
+            try:
+                sentinel_composite(
+                    target_path,
+                    composite_path,
+                    time_window=(
+                        datetime(year, 4, 1),
+                        datetime(year + 1, 4, 1),
+                    ),
+                    num_composites=num_composites,
+                    temporal_reducers=[reducer],
+                    indices=indices,
+                    sentinel_bands=sentinel_bands,
+                    batch_size=batch_size,
+                )
+            except BaseException as e:  # pylint: disable=broad-exception-caught
+                print(e)
+                sleep(sleep_time)
+                sleep_time *= 2
 
 
 @typechecked
@@ -396,9 +485,7 @@ def bands_from_importance(
     best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
-    sentinel_bands = [
-        band for band in valid_sentinel_bands if band in best_bands
-    ]
+    sentinel_bands = [band for band in valid_sentinel_bands if band in best_bands]
     index_bands = [band for band in valid_index_bands if band in best_bands]
 
     # Sanity check
@@ -434,12 +521,8 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
         target_pred = np.array(target_pred)
 
         # broadleaf is 0, conifer is 1
-        target_true = target_true[:, 0] / (
-            target_true[:, 0] + target_true[:, 1]
-        )
-        target_pred = target_pred[:, 0] / (
-            target_pred[:, 0] + target_pred[:, 1]
-        )
+        target_true = target_true[:, 0] / (target_true[:, 0] + target_true[:, 1])
+        target_pred = target_pred[:, 0] / (target_pred[:, 0] + target_pred[:, 1])
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
@@ -544,9 +627,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         }
 
         nonlocal model
-        pipe = _build_pipeline(
-            model, do_standardize, do_pca, n_components, params
-        )
+        pipe = _build_pipeline(model, do_standardize, do_pca, n_components, params)
 
         # Cross validate pipeline
         try:
@@ -577,9 +658,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         )
 
     # Optimize study
-    study.optimize(
-        objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
-    )
+    study.optimize(objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs)
 
     best_model = _study2model(study, model, data, target)
 
@@ -634,3 +713,53 @@ def cv_predict(
     plot = _target2raster(target_pred, indices_array, shape)
 
     return plot
+
+
+@typechecked
+def create_data(
+    year: int,
+    target_path: str,
+    data_folder: str,
+    batch_size: int | None = None,
+) -> None:
+    """Creates a data raster for a given year ready to be used for inference.
+
+    The files band_importance.csv and compositing.csv are expected to be located in "../reports/". The data raster is saved in the data_folder/year folder.
+
+    Args:
+        year:
+            Year to create data for.
+        target_path:
+            Path to the target data in GeoTIFF format.
+        data_folder:
+            Path to the folder to save the data and composite rasters in.
+        batch_size:
+            Number of samples to download at a time. Defaults to None.
+    """
+    # Skip if data already exists
+    stem = Path(data_folder).stem
+    data_path = Path(data_folder) / f"{year}/{stem}.tif"
+    if data_path.exists():
+        return
+    data_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Create composites
+    _create_composites(year, data_folder, target_path, batch_size)
+
+    # Combine into one raster
+    total_data = pd.DataFrame()
+    composite_dict = _get_composite_params()
+    for reducer, num_composites in tqdm(
+        composite_dict.items(), desc=f"Combining Composites for {year}"
+    ):
+        composite_path = str(
+            Path(data_folder) / f"{year}/{stem}_{reducer}_{num_composites}.tif"
+        )
+
+        data = load_raster(composite_path)
+        data = interpolate_data(data)
+        data = to_float32(data)
+        total_data = pd.concat([total_data, data], axis=1)
+
+    # Save the concatenated data
+    save_raster(total_data, target_path, str(data_path))

@@ -37,6 +37,7 @@ from itertools import product
 from numbers import Number
 from pathlib import Path
 from typing import Any, Coroutine, List, Tuple
+from urllib.request import urlopen
 
 import aiohttp
 import ee
@@ -1101,3 +1102,54 @@ def shapefile2raster(
     # Save target
     print("Computing image...")
     _save_image(target, raster_path)
+
+
+@typechecked
+def download_dlt_2018(
+    reference_path: str,
+    destination_path: str,
+) -> None:
+    """Downloads the Dominant Leaf Type (DLT) 2018 for a given reference raster.
+
+    The saved DLT raster is a raster with the values 0 and 1 representing the dominant leaf type broadleaf and conifer respectively. Unlabeled pixels are NaN. The raster is saved to destination_path.
+
+    Args:
+        reference_path:
+            A string representing the file path to the reference raster. The suffix '.tif' (GeoTIFF) is expected.
+        destination_path:
+            A string representing the output file path to save the DLT raster. The suffix '.tif' (GeoTIFF) is expected.
+    """
+    with rasterio.open(reference_path) as src:
+        crs = src.crs
+        bounds = src.bounds
+        width = src.width
+        height = src.height
+
+    url = "https://copernicus.discomap.eea.europa.eu/arcgis/services/GioLandPublic/HRL_DominanteLeafType_2018/ImageServer/WMSServer"
+
+    params = {
+        "request": "GetMap",
+        "layers": "0",
+        "format": "image/tiff",
+        "width": width,
+        "height": height,
+        "bbox": ",".join(map(str, bounds)),
+        "crs": crs,
+    }
+
+    url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
+
+    with urlopen(url) as response:
+        with MemoryFile(response.read()) as memfile:
+            with memfile.open() as src:
+                img = src.read(1).astype(float)
+                img[img == 240] = np.nan
+                img = img - 1
+
+                profile = src.profile
+                profile["dtype"] = rasterio.float32
+                profile["nodata"] = np.nan
+
+    with rasterio.open(destination_path, "w", **profile) as dst:
+        dst.write(img, 1)
+        dst.descriptions = ["Conifer"]
