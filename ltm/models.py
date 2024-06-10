@@ -200,9 +200,9 @@ def _target2raster(
     raster_shape = (plot_shape[1] * plot_shape[2], plot_shape[0])
     raster = np.full(raster_shape, np.nan)
     raster[indices] = target_values
-    raster = raster.reshape(plot_shape[1], plot_shape[2], plot_shape[0]).transpose(
-        2, 0, 1
-    )
+    raster = raster.reshape(
+        plot_shape[1], plot_shape[2], plot_shape[0]
+    ).transpose(2, 0, 1)
 
     # Use indices of BROADLEAF_AREA and CONIFER_AREA to compute mixture = broadleaf / (broadleaf + conifer)
     if area2mixture:
@@ -321,7 +321,9 @@ def _check_save_folder(
         study_path, model_path, _ = _create_paths(model, save_folder)
 
         if study_path.exists() and model_path.exists():
-            print(f"Files already exist, skipping search: {study_path}, {model_path}")
+            print(
+                f"Files already exist, skipping search: {study_path}, {model_path}"
+            )
 
             # Load best model and study
             with open(model_path, "rb") as file:
@@ -352,7 +354,9 @@ def _check_save_folder(
                 f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             )
     elif use_caching:
-        print("Warning: use_caching=True but save_folder=None, caching is disabled.")
+        print(
+            "Warning: use_caching=True but save_folder=None, caching is disabled."
+        )
 
     return None
 
@@ -423,10 +427,12 @@ def _create_composites(
     )
 
     # Create one composite for each reducer
-    iterable = tqdm(composite_dict.items(), desc=f"Downloading Composites for {year}")
+    iterable = tqdm(
+        composite_dict.items(), desc=f"Downloading Composites for {year}"
+    )
     for reducer, num_composites in iterable:
         composite_path = str(
-            Path(data_folder) / f"{year}/{stem}_{reducer}_{num_composites}.tif"
+            Path(data_folder) / f"{year}/data_{reducer}_{num_composites}.tif"
         )
 
         sleep_time = 60
@@ -485,7 +491,9 @@ def bands_from_importance(
     best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
-    sentinel_bands = [band for band in valid_sentinel_bands if band in best_bands]
+    sentinel_bands = [
+        band for band in valid_sentinel_bands if band in best_bands
+    ]
     index_bands = [band for band in valid_index_bands if band in best_bands]
 
     # Sanity check
@@ -521,8 +529,12 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
         target_pred = np.array(target_pred)
 
         # broadleaf is 0, conifer is 1
-        target_true = target_true[:, 0] / (target_true[:, 0] + target_true[:, 1])
-        target_pred = target_pred[:, 0] / (target_pred[:, 0] + target_pred[:, 1])
+        target_true = target_true[:, 0] / (
+            target_true[:, 0] + target_true[:, 1]
+        )
+        target_pred = target_pred[:, 0] / (
+            target_pred[:, 0] + target_pred[:, 1]
+        )
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
@@ -627,7 +639,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         }
 
         nonlocal model
-        pipe = _build_pipeline(model, do_standardize, do_pca, n_components, params)
+        pipe = _build_pipeline(
+            model, do_standardize, do_pca, n_components, params
+        )
 
         # Cross validate pipeline
         try:
@@ -658,7 +672,9 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         )
 
     # Optimize study
-    study.optimize(objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs)
+    study.optimize(
+        objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs
+    )
 
     best_model = _study2model(study, model, data, target)
 
@@ -724,7 +740,7 @@ def create_data(
 ) -> None:
     """Creates a data raster for a given year ready to be used for inference.
 
-    The files band_importance.csv and compositing.csv are expected to be located in "../reports/". The data raster is saved in the data_folder/year folder.
+    The files band_importance.csv and compositing.csv are expected to be located in "../reports/". The data raster is saved in the data_folder/year folder with the final data raster being saved as data_folder/year/data.tif.
 
     Args:
         year:
@@ -737,8 +753,7 @@ def create_data(
             Number of samples to download at a time. Defaults to None.
     """
     # Skip if data already exists
-    stem = Path(data_folder).stem
-    data_path = Path(data_folder) / f"{year}/{stem}.tif"
+    data_path = Path(data_folder) / f"{year}/data.tif"
     if data_path.exists():
         return
     data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -753,7 +768,7 @@ def create_data(
         composite_dict.items(), desc=f"Combining Composites for {year}"
     ):
         composite_path = str(
-            Path(data_folder) / f"{year}/{stem}_{reducer}_{num_composites}.tif"
+            Path(data_folder) / f"{year}/data_{reducer}_{num_composites}.tif"
         )
 
         data = load_raster(composite_path)
