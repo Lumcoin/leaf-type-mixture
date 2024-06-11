@@ -409,8 +409,6 @@ def _create_composites(
     target_path: str,
     batch_size: int | None = None,
 ) -> None:
-    stem = Path(data_folder).stem
-
     # Get selected bands and indices
     importance_path = "../reports/band_importance.csv"
     if Path(importance_path).exists():
