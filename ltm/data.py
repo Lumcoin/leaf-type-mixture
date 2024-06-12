@@ -242,9 +242,7 @@ def _select_bands(
 ) -> ee.ImageCollection:
     # Check sentinel_bands and indices
     within_desc = "Level 2A" if level_2a else "Level 1C"
-    _check_items(
-        sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc
-    )
+    _check_items(sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc)
     _check_items(indices, list_indices(), "indices", "eemont package")
 
     # Combine bands and indices
@@ -283,9 +281,7 @@ def _reduce_window(
     s2_window: ee.ImageCollection,
     temporal_reducers: List[str] | None,
 ) -> ee.Image:
-    _check_items(
-        temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer"
-    )
+    _check_items(temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer")
 
     # Default to mean reducer
     if not temporal_reducers:
@@ -297,9 +293,7 @@ def _reduce_window(
         reducer = getattr(ee.Reducer, temporal_reducer)()
         # Check if reducer is bitwise, if so, convert to integer type
         if temporal_reducer.startswith("bitwise"):
-            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(
-                reducer
-            )
+            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(reducer)
         else:
             reduced_image = s2_window.reduce(reducer)
 
@@ -405,8 +399,7 @@ async def _async_gather(
 
     with tqdm(total=len(coroutines), desc=desc) as pbar:
         wrapper = [
-            _wrap_coroutine(idx, coroutine)
-            for idx, coroutine in enumerate(coroutines)
+            _wrap_coroutine(idx, coroutine) for idx, coroutine in enumerate(coroutines)
         ]
         results = [None] * len(coroutines)
         for future in asyncio.as_completed(wrapper):
@@ -521,9 +514,7 @@ def _save_image(
     # Create batches of bands
     if batch_size is None:
         batch_size = len(bands)
-    band_batches = [
-        bands[i : i + batch_size] for i in range(0, len(bands), batch_size)
-    ]
+    band_batches = [bands[i : i + batch_size] for i in range(0, len(bands), batch_size)]
 
     # Warn user of GEE quota limits
     if len(band_batches) > 40:
@@ -533,17 +524,13 @@ def _save_image(
 
     # Get all image data using gather()
     try:
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches")
     except (aiohttp.ClientError, ValueError) as exc:
         if len(band_batches) == 1:
             raise exc
         print("Failed to download asynchroniously. Trying synchroniously...")
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches", asynchronous=False)
 
     # Combine results
@@ -665,9 +652,7 @@ def _compute_target(
     # Render plot as fine resolution image, then reduce to coarse resolution
     fine_scale = min(plot["dbh"].min() * 5, SCALE)
     if plot["dbh"].min() < 0.05:
-        print(
-            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
-        )
+        print("Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
         fine_scale = 0.25
 
     # Compute broadleaf and conifer area
@@ -678,15 +663,11 @@ def _compute_target(
     total_area = broadleaf_area.add(conifer_area)
     if area_as_target:
         target = broadleaf_area.addBands(conifer_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
+        target = target.updateMask(total_area.gt(0))  # Remove pixels with no trees
         target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
     else:
         target = conifer_area.divide(total_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
+        target = target.updateMask(total_area.gt(0))  # Remove pixels with no trees
         target = target.rename(CONIFER_PROPORTION)
 
     return target, (roi, SCALE, crs)
@@ -771,9 +752,7 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
         except (TypeError, ee.EEException):
             continue
 
-        if all(
-            v is None or isinstance(v, Number) for v in reduced_point.values()
-        ):
+        if all(v is None or isinstance(v, Number) for v in reduced_point.values()):
             reducers.append(attr)
 
     return reducers
@@ -1024,9 +1003,7 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
 
     # Get Sentinel-2 image collection filtered by bounds
     s2 = ee.ImageCollection(
-        "COPERNICUS/S2_SR_HARMONIZED"
-        if level_2a
-        else "COPERNICUS/S2_HARMONIZED"
+        "COPERNICUS/S2_SR_HARMONIZED" if level_2a else "COPERNICUS/S2_HARMONIZED"
     )
     s2 = s2.filterBounds(roi)
 
