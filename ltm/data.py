@@ -1166,7 +1166,7 @@ def download_dlt_2018(
         with MemoryFile(response.read()) as memfile:
             with memfile.open() as src:
                 img = src.read(1).astype(float)
-                img[img == 240] = np.nan
+                img[(img < 1) | (img > 2)] = np.nan
                 img = img - 1
 
                 profile = src.profile
