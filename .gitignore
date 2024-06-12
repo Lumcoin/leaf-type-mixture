@@ -8,6 +8,5 @@ ltm.yml
 /artifacts/
 /data/
 /notebooks/confidential/
-/reports/
 /models/
 **/*.tif

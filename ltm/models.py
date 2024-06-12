@@ -736,7 +736,7 @@ def create_data(
     data_folder: str,
     batch_size: int | None = None,
 ) -> None:
-    """Creates a data raster for a given year ready to be used for inference.
+    """Creates a data raster for a given year ready to be used for inference using the Earth Engine API.
 
     The files band_importance.csv and compositing.csv are expected to be located in "../reports/". The data raster is saved in the data_folder/year folder with the final data raster being saved as data_folder/year/data.tif.
 
