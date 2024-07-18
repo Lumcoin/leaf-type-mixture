@@ -11,4 +11,3 @@ ltm.yml
 /models/
 **/*.tif
 /tmp/
-/reports/figures/
