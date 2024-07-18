@@ -10,3 +10,5 @@ ltm.yml
 /notebooks/confidential/
 /models/
 **/*.tif
+/tmp/
+/reports/figures/
