@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "slc"
+version = "1.0.0"
+description = "Predicting leaf type mixture using tailored sentinel-2 composites."
+
+license = "MIT"
+
+authors = [
+    "Peter Hofinger <hofinger-peter@gmx.de>"
+]
+
+repository = "https://github.com/peter-hofinger/sentinel-leaf-classifier"
+
+readme = ["README.md", "LICENSE"]
+
+[tool.poetry.dependencies]
+python = ">=3.10"
+aiohttp = "*"
+dask = {extras = ["dataframe", "distributed"], version = "*"}
+dill = "*"
+earthengine-api = "*"
+eemont = "*"
+geopandas = "*"
+ipywidgets = "*"
+rasterio = "*"
+matplotlib = "*"
+nest_asyncio = "*"
+numpy = "*"
+optuna = "*"
+pandas = "*"
+pyproj = "*"
+requests = "*"
+scikit-elm = "*"
+scikit-learn = "*"
+SciencePlots = "*"
+seaborn = "*"
+tqdm = "*"
+typeguard = "4.2.1"
+utm = "*"
+xgboost = "*"
