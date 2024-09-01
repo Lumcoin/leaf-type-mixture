@@ -28,7 +28,7 @@ jobs:
         run: pip install uv
       - name: Create and activate virtual environment
         run: |
-          python -m uv venv venc
+          python -m uv venv venv
           source venv/bin/activate
       - name: Verify uv installation
         run: uv --version
