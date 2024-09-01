@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
-from ltm.visualize import fig2array, plot_report, show_timeseries
+
+from slc.visualize import fig2array, plot_report, show_timeseries
 
 
 def test_fig2array():

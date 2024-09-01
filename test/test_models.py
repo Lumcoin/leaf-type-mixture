@@ -1,12 +1,13 @@
 import unittest
 
 import numpy as np
-from ltm.models import cv_predict, hyperparam_search
 from optuna import Study
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
 from sklearn.metrics import make_scorer, root_mean_squared_error
 from sklearn.pipeline import Pipeline
+
+from slc.models import cv_predict, hyperparam_search
 
 
 class TestHyperparamSearch(unittest.TestCase):

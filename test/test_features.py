@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-from ltm.features import (
+
+from slc.features import (
     interpolate_data,
     load_raster,
     np2pd_like,
