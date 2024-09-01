@@ -38,13 +38,6 @@ import numpy.typing as npt
 import optuna
 import pandas as pd
 import rasterio
-from ltm.features import (
-    interpolate_data,
-    load_raster,
-    np2pd_like,
-    save_raster,
-    to_float32,
-)
 from sklearn.base import BaseEstimator
 from sklearn.decomposition import PCA
 from sklearn.impute import KNNImputer
@@ -66,6 +59,13 @@ from slc.data import (
     list_bands,
     list_indices,
     sentinel_composite,
+)
+from slc.features import (
+    interpolate_data,
+    load_raster,
+    np2pd_like,
+    save_raster,
+    to_float32,
 )
 
 
