@@ -35,7 +35,7 @@ jobs:
       - name: Install ruff and pylint
         run: uv pip install ruff pylint
       - name: Lint Code
-        run: python -m ruff slc
+        run: ruff slc
       - name: Lint Tests
         run: pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
         
