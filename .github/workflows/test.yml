@@ -44,4 +44,4 @@ jobs:
       - name: Install ruff and pylint
         run: uv pip install pytest
       - name: Run Tests
-        run: python -m pytest
+        run: source .venv/bin/activate && python -m pytest
