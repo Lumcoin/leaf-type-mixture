@@ -19,11 +19,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Cache python packages
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
-          key: testing-packages-${{ hashFiles('**/setup.py') }}
       - name: Create and activate virtual environment
         run: |
           python -m venv .venv
