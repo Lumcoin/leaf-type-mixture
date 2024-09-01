@@ -24,12 +24,12 @@ jobs:
         with:
           path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
           key: testing-packages-${{ hashFiles('**/setup.py') }}
-      - name: Install uv
-        run: pip install uv
       - name: Create and activate virtual environment
         run: |
-          python -m uv venv venv
-          source venv/bin/activate
+          python -m venv .venv
+          source .venv/bin/activate
+      - name: Install uv
+        run: pip install uv
       - name: Verify uv installation
         run: uv --version
       - name: Install dependencies
