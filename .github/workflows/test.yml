@@ -25,9 +25,12 @@ jobs:
           path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
           key: testing-packages-${{ hashFiles('**/setup.py') }}
       - name: Install dependencies
-        run: pip install -e '.[linting]'
+        run: pip install uv
+        run: uv pip install poetry
+        run: poetry build
+        run: uv pip install dist/slc-1.0.0-py3-none-any.whl
       - name: Lint Code
-        run: python -m pylint --disable=line-too-long,too-many-lines,no-member ltm
+        run: python -m ruff slc
       - name: Lint Tests
         run: pylint --disable=line-too-long,too-many-lines,no-member,missing-module-docstring,missing-class-docstring,missing-function-docstring test
         
