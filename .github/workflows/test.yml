@@ -36,7 +36,6 @@ jobs:
         run: uv --version
       - name: Build package
         run: |
-          source .venv/bin/activate
           uv pip install poetry
           python -m poetry build
       - name: Install package
