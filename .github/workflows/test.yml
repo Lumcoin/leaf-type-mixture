@@ -31,7 +31,9 @@ jobs:
           uv pip install poetry
           python -m poetry build
       - name: Install package
-        run: pip install dist/slc-1.0.0-py3-none-any.whl
+        run: uv pip install dist/slc-1.0.0-py3-none-any.whl
+      - name: Install ruff and pylint
+        run: uv pip install ruff pylint
       - name: Lint Code
         run: python -m ruff slc
       - name: Lint Tests
