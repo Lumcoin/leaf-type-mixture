@@ -24,8 +24,16 @@ jobs:
         with:
           path: ${{ env.Python3_ROOT_DIR }}/lib/python3.10/site-packages
           key: testing-packages-${{ hashFiles('**/setup.py') }}
+      - name: Install uv
+        run: pip install uv
+      - name: Create and activate virtual environment
+        run: |
+          python -m uv venv venc
+          source venv/bin/activate
+      - name: Verify uv installation
+        run: uv --version
       - name: Install dependencies
-        run: pip install uv && uv pip install poetry && poetry build && uv pip install dist/slc-1.0.0-py3-none-any.whl
+        run: uv pip install poetry && poetry build && uv pip install dist/slc-1.0.0-py3-none-any.whl
       - name: Lint Code
         run: python -m ruff slc
       - name: Lint Tests
