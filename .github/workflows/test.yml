@@ -25,12 +25,13 @@ jobs:
         run: pip install uv
       - name: Verify uv installation
         run: uv --version
-      - name: Install dependencies
+      - name: Build package
         run: |
           source .venv/bin/activate
           uv pip install poetry
           python -m poetry build
-          uv pip install dist/slc-1.0.0-py3-none-any.whl
+      - name: Install package
+        run: uv pip install dist/slc-1.0.0-py3-none-any.whl
       - name: Lint Code
         run: python -m ruff slc
       - name: Lint Tests
