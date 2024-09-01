@@ -30,7 +30,7 @@ Typical usage example:
 from datetime import datetime
 from pathlib import Path
 from time import sleep
-from typing import Any, Callable, Dict, Iterator, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import dill
 import numpy as np
@@ -38,28 +38,6 @@ import numpy.typing as npt
 import optuna
 import pandas as pd
 import rasterio
-from sklearn.base import BaseEstimator
-from sklearn.decomposition import PCA
-from sklearn.impute import KNNImputer
-from sklearn.metrics._scorer import _BaseScorer
-from sklearn.model_selection import (
-    BaseCrossValidator,
-    KFold,
-    cross_val_predict,
-    cross_validate,
-)
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from tqdm.notebook import tqdm
-from typeguard import typechecked
-
-from ltm.data import (
-    BROADLEAF_AREA,
-    CONIFER_AREA,
-    list_bands,
-    list_indices,
-    sentinel_composite,
-)
 from ltm.features import (
     interpolate_data,
     load_raster,
@@ -67,121 +45,28 @@ from ltm.features import (
     save_raster,
     to_float32,
 )
+from sklearn.base import BaseEstimator
+from sklearn.decomposition import PCA
+from sklearn.impute import KNNImputer
+from sklearn.metrics._scorer import _BaseScorer
+from sklearn.model_selection import (
+    BaseCrossValidator,
+    StratifiedKFold,
+    cross_val_predict,
+    cross_val_score,
+)
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from tqdm.notebook import tqdm
+from typeguard import typechecked
 
-
-@typechecked
-class EndMemberSplitter(BaseCrossValidator):
-    """K-fold splitter that only uses end members for training.
-
-    End members are defined as instances with label 0 or 1. Using this option with area per leaf type as labels is experimental.
-
-    Attributes:
-        n_splits:
-            Number of splits to use for kfold splitting.
-        k_fold:
-            KFold object to use for splitting.
-    """
-
-    def __init__(
-        self,
-        n_splits: int = 5,
-        shuffle: bool = False,
-        random_state: int | None = None,
-    ) -> None:
-        """Initializes the EndMemberSplitter.
-
-        Args:
-            n_splits:
-                Number of splits to use for kfold splitting.
-            shuffle:
-                Whether to shuffle the data before splitting into batches. Defaults to False.
-            random_state:
-                Random state to use for reproducible results.
-        """
-        self.n_splits = n_splits
-        self.k_fold = KFold(
-            n_splits=n_splits, shuffle=shuffle, random_state=random_state
-        )
-
-    def _iter_test_indices(
-        self,
-        X: npt.ArrayLike | None = None,
-        y: npt.ArrayLike | None = None,
-        groups: np.ndarray | None = None,
-    ) -> Iterator[np.ndarray]:
-        """Generates integer indices corresponding to test sets.
-
-        Args:
-            X:
-                Data to split.
-            y:
-                Labels to split.
-            groups:
-                Group labels to split.
-
-        Yields:
-            Integer indices corresponding to test sets.
-        """
-        fun = self.k_fold._iter_test_indices  # pylint: disable=protected-access
-        for test in fun(X, y, groups):
-            if y is not None:
-                indices = np.where((y[test] == 0) | (y[test] == 1))[0]
-                test = test[indices]
-            yield test
-
-    def split(
-        self,
-        X: npt.ArrayLike,
-        y: npt.ArrayLike | None = None,
-        groups: np.ndarray | None = None,
-    ) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
-        """Generates indices to split data into training and test set.
-
-        Args:
-            data:
-                Data to split.
-            target:
-                Labels to split.
-            groups:
-                Group labels to split. Not used.
-
-        Yields:
-            Tuple of indices for training and test set.
-        """
-        X = np.array(X)
-        y = np.array(y)
-        for train, test in self.k_fold.split(X, y):
-            indices = np.where((y[train] == 0) | (y[train] == 1))[0]
-
-            end_member_train = train[indices]
-
-            if end_member_train.shape[0] == 0:
-                raise ValueError(
-                    "No end members in one training set. Maybe you are just unlucky, try another random state."
-                )
-
-            yield end_member_train, test
-
-    def get_n_splits(
-        self,
-        X: npt.ArrayLike | None = None,
-        y: npt.ArrayLike | None = None,
-        groups: np.ndarray | None = None,
-    ) -> int:
-        """Returns the number of splitting iterations in the cross-validator.
-
-        Args:
-            X:
-                Data to split. Not used.
-            y:
-                Target to split. Not used.
-            groups:
-                Group labels to split. Not used.
-
-        Returns:
-            Number of splitting iterations in the cross-validator.
-        """
-        return self.n_splits
+from slc.data import (
+    BROADLEAF_AREA,
+    CONIFER_AREA,
+    list_bands,
+    list_indices,
+    sentinel_composite,
+)
 
 
 @typechecked
@@ -283,6 +168,7 @@ def _study2model(
     )
 
     # Fit best model
+    print("Fitting best model on complete dataset...")
     best_model.fit(data, target)
 
     return best_model
@@ -384,9 +270,9 @@ def _get_composite_params() -> Dict[str, int]:
             f"File {compositing_path} not found. Please run the compositing notebook first."
         ) from exc
 
-    metric = "Root Mean Squared Error"
+    metric = "F1 Score"
 
-    optimal_idx = df.groupby("Reducer")[metric].idxmin()
+    optimal_idx = df.groupby("Reducer")[metric].idxmax()
     optimal_df = df.loc[optimal_idx]
     optimal_df = optimal_df.set_index("Reducer")
 
@@ -401,14 +287,15 @@ def _get_composite_params() -> Dict[str, int]:
 @typechecked
 def _create_composites(
     year: int,
-    data_folder: str,
-    target_path: str,
+    data_folder: Path,
+    target_path: Path,
     batch_size: int | None = None,
+    top_n: int | None = None,
 ) -> None:
     # Get selected bands and indices
     importance_path = "../reports/band_importance.csv"
     if Path(importance_path).exists():
-        sentinel_bands, indices = bands_from_importance(importance_path)
+        sentinel_bands, indices = bands_from_importance(importance_path, top_n=top_n)
     else:
         raise FileNotFoundError(
             f"File {importance_path} not found. Please run the band importance notebook first."
@@ -434,8 +321,8 @@ def _create_composites(
                     target_path,
                     composite_path,
                     time_window=(
-                        datetime(year, 4, 1),
-                        datetime(year + 1, 4, 1),
+                        datetime(year, 1, 1),
+                        datetime(year + 1, 1, 1),
                     ),
                     num_composites=num_composites,
                     temporal_reducers=[reducer],
@@ -452,18 +339,18 @@ def _create_composites(
 @typechecked
 def bands_from_importance(
     band_importance_path: str,
-    top_n: int = 30,
+    top_n: int | None = None,
     level_2a: bool = True,
 ) -> Tuple[List[str], List[str]]:
     """Extracts the band names of Sentinel-2 bands and indices from the band importance file.
 
-    The top_n bands are read from the band importance file. Those bands are then divided into Sentinel-2 bands and indices.
+    The best/top_n bands are read from the band importance file. Those bands are then divided into Sentinel-2 bands and indices.
 
     Args:
         band_importance_path:
             Path to the file with band names and their scores. The bands are expected to be in reverse order of when they were removed by RFE. Only the band names and their order are used.
         top_n:
-            Number of bands to keep. Defaults to 30.
+            An optional integer representing the number of bands to keep. Chooses the number of bands leading to the max score if None. Defaults to None.
         level_2a:
             Whether the band importance file is from a level 2A dataset. This is necessary for distinguishing Sentinel-2 bands from indices. Defaults to True.
 
@@ -477,9 +364,13 @@ def bands_from_importance(
     # Read band importance file
     df = pd.read_csv(band_importance_path, index_col=0)
     band_names = df.index
-    df = df.reset_index()
+    df = df.reset_index(drop=True)
 
     # Divide bands into Sentinel-2 bands and indices
+    if top_n is None:
+        print(f"Using maximum value in column {df.columns[0]} to determine top_n.")
+        top_n = df[df.columns[0]].idxmax() + 1
+
     best_bands = list(band_names[:top_n])
     valid_sentinel_bands = list_bands(level_2a)
     valid_index_bands = list_indices()
@@ -558,7 +449,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         target:
             Labels to use for hyperparameter search.
         scorer:
-            Scorer to use for hyperparameter search. Please make sure to set greater_is_better=False when using make_scorer if you want to minimize a metric.
+            Scorer to use for hyperparameter search. Greater score is better. Please make sure to set greater_is_better=False when using make_scorer if you want to minimize a metric.
         cv:
             Number of folds or BaseCrossValidator instance to use for cross validation. Defaults to 5.
         n_trials:
@@ -629,10 +520,13 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
 
         # Cross validate pipeline
         try:
-            cv_results = cross_validate(
-                pipe, data, target, cv=cv, scoring=scorer, n_jobs=-1
+            k_fold = StratifiedKFold(
+                n_splits=cv, shuffle=True, random_state=random_state
             )
-            score = cv_results["test_score"].mean()
+            cv_scores = cross_val_score(
+                pipe, data, target, cv=k_fold, scoring=scorer, n_jobs=-1
+            )
+            score = cv_scores.min()  # Worst score
 
             return score
         # Catch case that all fits fail
@@ -673,8 +567,8 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
 @typechecked
 def cv_predict(
     model: BaseEstimator,
-    data_path: str,
-    target_path: str,
+    data_path: str | Path,
+    target_path: str | Path,
     cv: int | BaseCrossValidator | None = None,
 ) -> np.ndarray:
     """Predicts on rasters using cross_val_predict.
@@ -683,15 +577,19 @@ def cv_predict(
         model:
             Regressor to use for prediction.
         data_path:
-            A string with path to the data in GeoTIFF format.
+            A string or Path with path to the data in GeoTIFF format.
         target_path:
-            A string with path to the target data in GeoTIFF format.
+            A string or Path with path to the target data in GeoTIFF format.
         cv:
             An integer for the number of folds or a BaseCrossValidator object for performing cross validation. Will be passed to sklearn.model_selection.cross_val_predict(). Defaults to None.
 
     Returns:
         A numpy raster of the prediction in the format of read() from rasterio.
     """
+    # Make paths Path objects
+    data_path = Path(data_path)
+    target_path = Path(target_path)
+
     # Load data and plot shape
     data = load_raster(data_path)
     target = load_raster(target_path)
@@ -716,9 +614,10 @@ def cv_predict(
 @typechecked
 def create_data(
     year: int,
-    target_path: str,
-    data_folder: str,
+    target_path: str | Path,
+    data_folder: str | Path,
     batch_size: int | None = None,
+    top_n: int | None = None,
 ) -> None:
     """Creates a data raster for a given year ready to be used for inference using the Earth Engine API.
 
@@ -733,7 +632,13 @@ def create_data(
             Path to the folder to save the data and composite rasters in.
         batch_size:
             Number of samples to download at a time. Defaults to None.
+        top_n:
+            Number of most important bands to use for the composites. Uses number of bands that lead to max score if None. Defaults to None.
     """
+    # Make paths Path objects
+    target_path = Path(target_path)
+    data_folder = Path(data_folder)
+
     # Skip if data already exists
     data_path = Path(data_folder) / f"{year}/data.tif"
     if data_path.exists():
@@ -741,7 +646,7 @@ def create_data(
     data_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Create composites
-    _create_composites(year, data_folder, target_path, batch_size)
+    _create_composites(year, data_folder, target_path, batch_size, top_n=top_n)
 
     # Combine into one raster
     total_data = pd.DataFrame()

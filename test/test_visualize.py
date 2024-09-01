@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
-
 from ltm.visualize import fig2array, plot_report, show_timeseries
 
 
@@ -18,7 +17,8 @@ def test_fig2array():
     assert isinstance(arr, np.ndarray)
     assert arr.shape == (fig.canvas.get_width_height()[::-1] + (4,))
     assert np.allclose(
-        arr[0, 0], [1, 1, 1, 1]  # pylint: disable=unsubscriptable-object
+        arr[0, 0],
+        [1, 1, 1, 1],  # pylint: disable=unsubscriptable-object
     )
     assert np.allclose(arr[..., 3], 1)  # pylint: disable=unsubscriptable-object
 

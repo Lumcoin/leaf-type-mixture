@@ -11,12 +11,14 @@ Typical usage example:
     target = load_raster(target_path)
 
     data = interpolate_data(data)
-    
+
     save_raster(data, data_path, "data_interpolated.tif")
 """
 
 import os
 from collections import defaultdict
+from os import PathLike
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,7 +32,148 @@ from sklearn.feature_selection import mutual_info_regression
 from tqdm.notebook import tqdm
 from typeguard import typechecked
 
-from ltm.data import split_band_name
+from slc.data import split_band_name
+
+
+@typechecked
+def genera2target(
+    genera_areas: pd.DataFrame, regression: bool = False, evergreen_larix: bool = False
+) -> pd.Series | pd.DataFrame:
+    """Converts a DataFrame containing base area per genera to a Series or DataFrame containing the target.
+
+    Args:
+        genera_areas:
+            A pandas DataFrame containing the base area per genera. The column names are used as genera names.
+        regression:
+            A boolean representing whether to use regression instead of classification. Defaults to False.
+        evergreen_larix:
+            A boolean representing whether to classify Larix as evergreen. Only relevant for comparing targets with Dominant Leaf Type 2018. Defaults to False.
+
+    Returns:
+        A pandas Series or DataFrame containing the target. If regression is True, the target is a DataFrame with columns 'evergreen' and 'deciduous' containing the respective base areas. If regression is False, the target is a Series with values 'evergreen' and 'deciduous'.
+    """
+    evergreen = {
+        "Abies": True,
+        "Acer": False,
+        "Aesculus": False,
+        "Alnus": False,
+        "Betula": False,
+        "Carpinus": False,
+        "Crataegus": False,
+        "Cornus": False,
+        "Corylus": False,
+        "Euonymus": False,
+        "Fagus": False,
+        "Fraxinus": False,
+        "Juglans": False,
+        "Larix": evergreen_larix,  # Larch, deciduous conifer
+        "Picea": True,
+        "Pinus": True,
+        "Populus": False,
+        "Prunus": False,
+        "Pseudotsuga": True,
+        "Pyrus": False,
+        "Rhamnus": False,
+        "Quercus": False,
+        "Sambucus": False,
+        "Sorbus": False,
+        "Taxus": True,
+        "Tilia": False,
+        "Thuja": True,
+        "Ulmus": False,
+        "Unidentified broadleaf": False,  # Assumed for all unknown broadleafs
+        "Unidentified conifer": True,  # Assumed for all unknown conifers
+    }
+
+    target = genera_areas.copy()
+    do_mask = target.isna().all(axis=1)
+    target.fillna(0, inplace=True)
+
+    evergreen_columns = [col for col in target.columns if evergreen[col]]
+    evergreen_area = target[evergreen_columns].sum(axis=1)
+
+    deciduous_columns = [col for col in target.columns if not evergreen[col]]
+    deciduous_area = target[deciduous_columns].sum(axis=1)
+
+    if regression:
+        target["evergreen"] = evergreen_area
+        target["deciduous"] = deciduous_area
+        target[do_mask] = np.nan
+
+        return target[["evergreen", "deciduous"]]
+
+    target = (evergreen_area > deciduous_area).map(
+        {True: "evergreen", False: "deciduous"}
+    )
+    target[do_mask] = np.nan
+
+    return target
+
+
+@typechecked
+def load_dataset(
+    data_path: str | PathLike, target_path: str | PathLike
+) -> tuple[pd.DataFrame, pd.Series]:
+    """Loads the dataset from the given paths.
+
+    Args:
+        data_path:
+            A string or PathLike representing the file path to the data. The suffix '.tif' (GeoTIFF) is expected. If a directory is given, all .tif files in the directory are loaded.
+        target_path:
+            A string or PathLike representing the file path to the target. The suffix '.tif' (GeoTIFF) is expected. If a directory is given, all .tif files in the directory are loaded.
+
+    Returns:
+        A tuple of a pandas DataFrame containing the data and a pandas Series containing the target. The target is 1, representing evergreen, or 0, representing deciduous.
+    """
+    data_path = Path(data_path)
+    target_path = Path(target_path)
+
+    if data_path.is_dir() and target_path.is_dir():
+        data_names = set([f.name for f in data_path.glob("*.tif")])
+        target_names = set([f.name for f in target_path.glob("*.tif")])
+        common_names = data_names.intersection(target_names)
+
+        if not common_names:
+            raise FileNotFoundError(
+                "No common files found in data and target directories."
+            )
+
+        lonely_files = list(data_names.union(target_names).difference(common_names))
+        if lonely_files:
+            print(
+                "Warning: All files in data and target directories without a corresponding file are discarded:",
+                lonely_files,
+            )
+
+        data = []
+        target = []
+        for name in sorted(common_names):  # reproducibility
+            data.append(load_raster(data_path / name))
+            target.append(load_raster(target_path / name, monochrome_as_dataframe=True))
+
+        data = pd.concat(data)
+        target = pd.concat(target)
+
+        data.reset_index(drop=True, inplace=True)
+        target.reset_index(drop=True, inplace=True)
+    elif (not data_path.is_dir()) and (not target_path.is_dir()):
+        data = load_raster(data_path)
+        target = load_raster(target_path, monochrome_as_dataframe=True)
+    else:
+        raise ValueError(
+            "Expected data_path and target_path to be either directories or files, got a mix instead."
+        )
+
+    target = genera2target(target)
+
+    mask = target.notna()
+    data, target = data[mask], target[mask]
+    data.reset_index(drop=True, inplace=True)
+    target.reset_index(drop=True, inplace=True)
+
+    target = target.map({"evergreen": 1, "deciduous": 0})
+
+    return data, target
 
 
 @typechecked
@@ -163,20 +306,21 @@ def interpolate_data(
 
 @typechecked
 def load_raster(
-    raster_path: str,
+    raster_path: str | PathLike,
     monochrome_as_dataframe: bool = False,
 ) -> pd.DataFrame | pd.Series:
     """Loads a raster and returns the data ready to use with sklearn.
 
     Args:
         raster_path:
-            A string representing the file path to the raster. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the file path to the raster. The suffix '.tif' (GeoTIFF) is expected.
         monochrome_as_dataframe:
             A boolean representing whether to return a monochrome raster as a pandas DataFrame instead of a Series. Defaults to False.
 
     Returns:
         A DataFrame containing the data with band names as column names. If the raster is monochrome and 'monochrome_as_dataframe' is False, a Series is returned instead. This is expected by sklearn.
     """
+    raster_path = str(raster_path)
     # Check if all paths are valid
     if not raster_path.endswith(".tif"):
         raise ValueError(f"Expected path to .tif file, got '{raster_path}' instead.")
@@ -201,8 +345,8 @@ def load_raster(
 @typechecked
 def save_raster(
     data: pd.DataFrame,
-    source_path: str,
-    destination_path: str,
+    source_path: str | PathLike,
+    destination_path: str | PathLike,
 ) -> None:
     """Saves the data as a raster image.
 
@@ -210,9 +354,9 @@ def save_raster(
         data:
             A pandas DataFrame containing the data. The column names are used as band names.
         source_path:
-            A string of the file path to the source image. Used for copying the raster profile.
+            A string or PathLike of the file path to the source image. Used for copying the raster profile.
         destination_path:
-            A string of the file path to the destination image.
+            A string or PathLike of the file path to the destination image.
     """
     # Copy data
     data_values = data.values.copy()

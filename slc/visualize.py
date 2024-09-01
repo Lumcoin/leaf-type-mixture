@@ -27,7 +27,7 @@ import pandas as pd
 import rasterio
 from typeguard import typechecked
 
-from ltm.data import combine_band_name, split_band_name
+from slc.data import combine_band_name, split_band_name
 
 
 def _rgb_bands2indices(

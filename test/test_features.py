@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import pytest
 import rasterio
-
 from ltm.features import (
     interpolate_data,
     load_raster,

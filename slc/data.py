@@ -32,11 +32,13 @@ Typical usage example:
 
 import asyncio
 import datetime
+from collections import defaultdict
 from functools import lru_cache
 from itertools import product
 from numbers import Number
+from os import PathLike
 from pathlib import Path
-from typing import Any, Coroutine, List, Tuple
+from typing import Any, Coroutine, Dict, List, Tuple
 from urllib.request import urlopen
 from xml.etree import ElementTree
 
@@ -57,7 +59,7 @@ from typeguard import typechecked
 BROADLEAF_AREA = "Broadleaf Area"
 CONIFER_AREA = "Conifer Area"
 CONIFER_PROPORTION = "Conifer Proportion"
-CONIFER = "conifer"
+GENUS = "genus"
 DBH = "dbh"
 LATITUDE = "latitude"
 LONGITUDE = "longitude"
@@ -209,8 +211,9 @@ def _split_time_window(
 
 @typechecked
 def _get_roi_scale_crs(
-    target_path: str,
+    target_path: str | PathLike,
 ) -> Tuple[ee.Geometry, float, str]:
+    target_path = str(target_path)
     _check_path(target_path, suffix=".tif")
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
@@ -243,9 +246,7 @@ def _select_bands(
 ) -> ee.ImageCollection:
     # Check sentinel_bands and indices
     within_desc = "Level 2A" if level_2a else "Level 1C"
-    _check_items(
-        sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc
-    )
+    _check_items(sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc)
     _check_items(indices, list_indices(), "indices", "eemont package")
 
     # Combine bands and indices
@@ -284,9 +285,7 @@ def _reduce_window(
     s2_window: ee.ImageCollection,
     temporal_reducers: List[str] | None,
 ) -> ee.Image:
-    _check_items(
-        temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer"
-    )
+    _check_items(temporal_reducers, list_reducers(), "temporal_reducers", "ee.Reducer")
 
     # Default to mean reducer
     if not temporal_reducers:
@@ -298,9 +297,7 @@ def _reduce_window(
         reducer = getattr(ee.Reducer, temporal_reducer)()
         # Check if reducer is bitwise, if so, convert to integer type
         if temporal_reducer.startswith("bitwise"):
-            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(
-                reducer
-            )
+            reduced_image = s2_window.map(lambda image: image.toInt()).reduce(reducer)
         else:
             reduced_image = s2_window.reduce(reducer)
 
@@ -406,8 +403,7 @@ async def _async_gather(
 
     with tqdm(total=len(coroutines), desc=desc) as pbar:
         wrapper = [
-            _wrap_coroutine(idx, coroutine)
-            for idx, coroutine in enumerate(coroutines)
+            _wrap_coroutine(idx, coroutine) for idx, coroutine in enumerate(coroutines)
         ]
         results = [None] * len(coroutines)
         for future in asyncio.as_completed(wrapper):
@@ -506,9 +502,11 @@ async def _get_image_data(
 @typechecked
 def _save_image(
     image: ee.Image,
-    file_path: str,
+    file_path: str | PathLike,
     batch_size: int | None = None,
 ) -> None:
+    file_path = str(file_path)
+
     # Check file path and batch size
     _check_path(file_path, suffix=".tif", check_self=False)
     if not (batch_size is None or batch_size > 0):
@@ -522,9 +520,7 @@ def _save_image(
     # Create batches of bands
     if batch_size is None:
         batch_size = len(bands)
-    band_batches = [
-        bands[i : i + batch_size] for i in range(0, len(bands), batch_size)
-    ]
+    band_batches = [bands[i : i + batch_size] for i in range(0, len(bands), batch_size)]
 
     # Warn user of GEE quota limits
     if len(band_batches) > 40:
@@ -534,17 +530,13 @@ def _save_image(
 
     # Get all image data using gather()
     try:
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches")
     except (aiohttp.ClientError, ValueError) as exc:
         if len(band_batches) == 1:
             raise exc
         print("Failed to download asynchroniously. Trying synchroniously...")
-        coroutines = [
-            _get_image_data(image, bands=batch) for batch in band_batches
-        ]
+        coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches", asynchronous=False)
 
     # Combine results
@@ -616,10 +608,16 @@ def _compute_area(
 def _check_plot(
     plot: pd.DataFrame,
 ) -> pd.DataFrame:
+    if len(plot) == 0:
+        raise ValueError("Empty plot DataFrame")
+
+    if plot.isna().any(axis=None):
+        raise ValueError("NaN values found in plot DataFrame")
+
     plot = plot.rename(columns=str.lower)
 
     expected_dtypes = {
-        CONIFER: np.int8,
+        GENUS: object,
         DBH: np.float64,
         LATITUDE: np.float64,
         LONGITUDE: np.float64,
@@ -635,15 +633,17 @@ def _check_plot(
     return plot
 
 
+# TODO: check if quick implementation is correct
 @typechecked
 def _compute_target(
-    broadleafs: ee.FeatureCollection,
-    conifers: ee.FeatureCollection,
+    genus_dict: Dict[str, ee.FeatureCollection],
     plot: pd.DataFrame,
-    area_as_target: bool,
 ) -> Tuple[ee.Image, Tuple[ee.Geometry, float, str]]:
     # Get region of interest (ROI)
-    roi = broadleafs.merge(conifers).geometry()
+    total_fc = list(genus_dict.values())[0]
+    for fc in list(genus_dict.values())[1:]:
+        total_fc = total_fc.merge(fc)
+    roi = total_fc.geometry()
 
     # Get CRS in epsg format for center of the roi
     longitude, latitude = roi.centroid(1).getInfo()["coordinates"]
@@ -666,29 +666,23 @@ def _compute_target(
     # Render plot as fine resolution image, then reduce to coarse resolution
     fine_scale = min(plot["dbh"].min() * 5, SCALE)
     if plot["dbh"].min() < 0.05:
-        print(
-            "Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees."
-        )
+        print("Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
         fine_scale = 0.25
 
     # Compute broadleaf and conifer area
-    broadleaf_area = _compute_area(broadleafs, SCALE, fine_scale, crs)
-    conifer_area = _compute_area(conifers, SCALE, fine_scale, crs)
+    genus_areas = {}
+    for genus, fc in genus_dict.items():
+        genus_areas[genus] = _compute_area(fc, SCALE, fine_scale, crs)
 
     # Compute target (conifer proportion) from broadleaf_area and conifer_area
-    total_area = broadleaf_area.add(conifer_area)
-    if area_as_target:
-        target = broadleaf_area.addBands(conifer_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
-        target = target.rename([BROADLEAF_AREA, CONIFER_AREA])
-    else:
-        target = conifer_area.divide(total_area)
-        target = target.updateMask(
-            total_area.gt(0)
-        )  # Remove pixels with no trees
-        target = target.rename(CONIFER_PROPORTION)
+    target = list(genus_areas.values())[0]
+    total_area = list(genus_areas.values())[0]
+    for genus_area in list(genus_areas.values())[1:]:
+        target = target.addBands(genus_area)
+        total_area = total_area.add(genus_area)
+
+    target = target.updateMask(total_area.gt(0))  # Remove pixels with no trees
+    target = target.rename(list(genus_areas.keys()))
 
     return target, (roi, SCALE, crs)
 
@@ -772,9 +766,7 @@ def list_reducers(use_buffered_reducers: bool = True) -> List[str]:
         except (TypeError, ee.EEException):
             continue
 
-        if all(
-            v is None or isinstance(v, Number) for v in reduced_point.values()
-        ):
+        if all(v is None or isinstance(v, Number) for v in reduced_point.values()):
             reducers.append(attr)
 
     return reducers
@@ -912,9 +904,9 @@ def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
 
 @typechecked
 def compute_target(
-    target_path: str,
+    target_path: str | PathLike,
     plot: pd.DataFrame,
-    area_as_target: bool = False,
+    retry: bool = True,
 ) -> None:
     """Computes the label for a plot.
 
@@ -922,11 +914,13 @@ def compute_target(
 
     Args:
         target_path:
-            A string representing the file path to save the raster. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the file path to save the raster. The suffix '.tif' (GeoTIFF) is expected.
         plot:
             A pandas DataFrame containing data on a single tree level with one column for longitude and latitude each, one column for DBH, and one for whether or not the tree is a conifer (1 is conifer, 0 is broadleaf). The column names must be 'longitude', 'latitude', 'dbh', and 'broadleaf' respectively.
         area_as_target:
             A boolean indicating whether to compute the area per leaf type instead of the leaf type mixture as labels. Results in a target with two bands, one for each leaf type. Defaults to False.
+        retry:
+            A boolean indicating whether to retry the computation if it fails. Can result in an infinite loop. Defaults to True.
     """
     # Initialize Earth Engine API
     _initialize_ee()
@@ -934,11 +928,11 @@ def compute_target(
 
     # Ensure proper plot DataFrame and path format
     plot = _check_plot(plot)
+    target_path = str(target_path)
     _check_path(target_path, suffix=".tif", check_self=False)
 
     # Upload plot
-    broadleafs = []
-    conifers = []
+    genus_dict = defaultdict(list)
     for _, row in plot.iterrows():
         circle = ee.Geometry.Point(
             [
@@ -947,31 +941,34 @@ def compute_target(
             ]
         ).buffer(row["dbh"] / 2)
 
-        if row["conifer"]:
-            conifers.append(circle)
-        else:
-            broadleafs.append(circle)
-    broadleafs = ee.FeatureCollection(broadleafs)
-    conifers = ee.FeatureCollection(conifers)
+        genus_dict[row["genus"]].append(circle)
+
+    genus_dict = {genus: ee.FeatureCollection(fc) for genus, fc in genus_dict.items()}
 
     # Compute target
-    target, (roi, scale, crs) = _compute_target(
-        broadleafs, conifers, plot, area_as_target
-    )
+    target, (roi, scale, crs) = _compute_target(genus_dict, plot)
 
     # Clip to roi and reproject
     target = target.clip(roi)
     target = target.reproject(scale=scale, crs=crs)
 
-    # Save target
-    print("Computing labels...")
-    _save_image(target, target_path)
+    while True:
+        try:
+            # Save target
+            print("Computing labels...")
+            _save_image(target, target_path)
+            break
+        except ee.ee_exception.EEException as exc:
+            if not retry:
+                raise exc
+            print("Failed to compute labels. Retrying...")
+            continue
 
 
 @typechecked
 def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
-    target_path_from: str,
-    data_path_to: str,
+    target_path_from: str | PathLike,
+    data_path_to: str | PathLike,
     time_window: Tuple[datetime.date, datetime.date],
     num_composites: int = 1,
     temporal_reducers: List[str] | None = None,
@@ -987,9 +984,9 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
 
     Args:
         target_path_from:
-            A string representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and pixel size of the image. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and pixel size of the image. The suffix '.tif' (GeoTIFF) is expected.
         data_path_to:
-            A string representing the output file path to save the composite raster. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the output file path to save the composite raster. The suffix '.tif' (GeoTIFF) is expected.
         time_window:
             A tuple of two dates representing the start and end of the time window in which the satellite images are retrieved. The dates are converted to milliseconds. The end date is technically excluded, but only by one millisecond.
         num_composites:
@@ -1021,13 +1018,13 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
     )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
+    target_path_from = str(target_path_from)
+    data_path_to = str(data_path_to)
     roi, scale, crs = _get_roi_scale_crs(target_path_from)
 
     # Get Sentinel-2 image collection filtered by bounds
     s2 = ee.ImageCollection(
-        "COPERNICUS/S2_SR_HARMONIZED"
-        if level_2a
-        else "COPERNICUS/S2_HARMONIZED"
+        "COPERNICUS/S2_SR_HARMONIZED" if level_2a else "COPERNICUS/S2_HARMONIZED"
     )
     s2 = s2.filterBounds(roi)
 
@@ -1066,22 +1063,24 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
 
 @typechecked
 def shapefile2raster(
-    shapefile_path: str,
-    raster_path: str,
+    shapefile_path: str | PathLike,
+    raster_path: str | PathLike,
 ) -> None:
     """Creates a raster mask from a shapefile.
 
     Args:
         shapefile_path:
-            A string representing the file path to the shapefile. The suffix '.shp' is expected.
+            A string or PathLike representing the file path to the shapefile. The suffix '.shp' is expected.
         raster_path:
-            A string representing the file path to save the raster mask. All cells partially or fully inside the shapefile will be 1 and all cells outside the shapefile will be NaN.  The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the file path to save the raster mask. All cells partially or fully inside the shapefile will be 1 and all cells outside the shapefile will be NaN.  The suffix '.tif' (GeoTIFF) is expected.
     """
     # Initialize Earth Engine API
     _initialize_ee()
     print("Preparing labels...")
 
     # Ensure proper path format
+    shapefile_path = str(shapefile_path)
+    raster_path = str(raster_path)
     _check_path(shapefile_path, suffix=".shp")
     _check_path(raster_path, suffix=".tif", check_self=False)
 
@@ -1130,8 +1129,8 @@ def shapefile2raster(
 
 @typechecked
 def download_dlt_2018(
-    reference_path: str,
-    destination_path: str,
+    reference_path: str | PathLike,
+    destination_path: str | PathLike,
 ) -> None:
     """Downloads the Dominant Leaf Type (DLT) 2018 for a given reference raster.
 
@@ -1139,9 +1138,9 @@ def download_dlt_2018(
 
     Args:
         reference_path:
-            A string representing the file path to the reference raster. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the file path to the reference raster. The suffix '.tif' (GeoTIFF) is expected.
         destination_path:
-            A string representing the output file path to save the DLT raster. The suffix '.tif' (GeoTIFF) is expected.
+            A string or PathLike representing the output file path to save the DLT raster. The suffix '.tif' (GeoTIFF) is expected.
     """
     with rasterio.open(reference_path) as src:
         crs = src.crs

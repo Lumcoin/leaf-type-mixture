@@ -1,16 +1,12 @@
 import unittest
 
 import numpy as np
+from ltm.models import cv_predict, hyperparam_search
 from optuna import Study
 from skelm import ELMRegressor
 from sklearn.datasets import make_regression
 from sklearn.metrics import make_scorer, root_mean_squared_error
 from sklearn.pipeline import Pipeline
-
-from ltm.models import cv_predict, hyperparam_search
-
-from .test_features import fixture_data_path  # pylint: disable=unused-import
-from .test_features import fixture_target_path  # pylint: disable=unused-import
 
 
 class TestHyperparamSearch(unittest.TestCase):

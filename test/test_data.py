@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import rasterio
-
 from ltm.data import combine_band_name, download_dlt_2018, split_band_name
 
 
