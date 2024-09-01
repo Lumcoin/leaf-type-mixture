@@ -36,6 +36,7 @@ jobs:
         run: uv --version
       - name: Build package
         run: |
+          source .venv/bin/activate
           uv pip install poetry
           python -m poetry build
       - name: Install package
@@ -43,4 +44,6 @@ jobs:
       - name: Install ruff and pylint
         run: uv pip install pytest
       - name: Run Tests
-        run: source .venv/bin/activate && python -m pytest
+        run: |
+          source .venv/bin/activate
+          python -m pytest
