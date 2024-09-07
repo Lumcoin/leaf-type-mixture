@@ -37,7 +37,10 @@ from slc.data import split_band_name
 
 @typechecked
 def genera2target(
-    genera_areas: pd.DataFrame, regression: bool = False, evergreen_larix: bool = False
+    genera_areas: pd.DataFrame,
+    *,
+    regression: bool = False,
+    evergreen_larix: bool = False,
 ) -> pd.Series | pd.DataFrame:
     """Converts a DataFrame containing base area per genera to a Series or DataFrame containing the target.
 
@@ -51,6 +54,7 @@ def genera2target(
 
     Returns:
         A pandas Series or DataFrame containing the target. If regression is True, the target is a DataFrame with columns 'evergreen' and 'deciduous' containing the respective base areas. If regression is False, the target is a Series with values 'evergreen' and 'deciduous'.
+
     """
     evergreen = {
         "Abies": True,
@@ -124,6 +128,7 @@ def load_dataset(
 
     Returns:
         A tuple of a pandas DataFrame containing the data and a pandas Series containing the target. The target is 1, representing evergreen, or 0, representing deciduous.
+
     """
     data_path = Path(data_path)
     target_path = Path(target_path)
@@ -191,6 +196,7 @@ def np2pd_like(
 
     Returns:
         A pandas Series or DataFrame with the same column names or series name as the given pandas object.
+
     """
     if isinstance(like_pd_obj, pd.Series):
         if np_obj.ndim != 1:
@@ -222,6 +228,7 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
 
     Returns:
         A DataFrame containing the data as float32.
+
     """
     # Check if dtype is numeric
     dtypes = data.dtypes
@@ -248,24 +255,26 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
 @typechecked
 def interpolate_data(
     data: pd.DataFrame,
-    cyclic: bool = True,
     method: str = "linear",
     order: int | None = None,
+    *,
+    cyclic: bool = True,
 ) -> pd.DataFrame:
     """Interpolate missing time series values in data using the given method.
 
     Args:
         data:
             A pd.DataFrame containing the data as values and band names as column names.
-        cyclic:
-            A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
         method:
             A string representing the method to use for interpolation. Methods 'polynomial' and 'spline' require an integer 'order' as additional argument. Defaults to 'linear'. See https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.interpolate.html
         order:
             An integer representing the order of the polynomial or spline interpolation. Defaults to None.
+        cyclic:
+            A boolean representing whether the data is cyclic. If so, the interpolation of values at the start will use values from the end of the time series and vice versa. Defaults to True.
 
     Returns:
         A dataframe containing the interpolated data.
+
     """
     # Return if no NaN values found
     if not data.isna().values.any():
@@ -307,6 +316,7 @@ def interpolate_data(
 @typechecked
 def load_raster(
     raster_path: str | PathLike,
+    *,
     monochrome_as_dataframe: bool = False,
 ) -> pd.DataFrame | pd.Series:
     """Loads a raster and returns the data ready to use with sklearn.
@@ -319,6 +329,7 @@ def load_raster(
 
     Returns:
         A DataFrame containing the data with band names as column names. If the raster is monochrome and 'monochrome_as_dataframe' is False, a Series is returned instead. This is expected by sklearn.
+
     """
     raster_path = str(raster_path)
     # Check if all paths are valid
@@ -357,6 +368,7 @@ def save_raster(
             A string or PathLike of the file path to the source image. Used for copying the raster profile.
         destination_path:
             A string or PathLike of the file path to the destination image.
+
     """
     # Copy data
     data_values = data.values.copy()
@@ -396,6 +408,7 @@ def get_similarity_matrix(
 
     Returns:
         A numpy array containing the similarity matrix. It is symmetrical, has a diagonal of ones and values from 0 to 1.
+
     """
     # Check if all column names are unique
     if len(set(data.columns)) != len(data.columns):
@@ -468,6 +481,7 @@ def show_similarity_matrix(
     Args:
         similarity_matrix:
             A pandas DataFrame containing the similarity matrix.
+
     """
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
@@ -508,6 +522,7 @@ def show_dendrogram(
 
     Returns:
         A matplotlib Axes object.
+
     """
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
@@ -550,6 +565,7 @@ def dendrogram_dim_red(
 
     Returns:
         A tuple of a numpy array containing the data and a list of strings representing the band names.
+
     """
     # Check if similarity matrix is square
     index = list(similarity_matrix.index)

@@ -27,18 +27,18 @@ Typical usage example:
     )
 """
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from time import sleep
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any
 
 import dill
 import numpy as np
-import numpy.typing as npt
 import optuna
 import pandas as pd
 import rasterio
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.decomposition import PCA
 from sklearn.impute import KNNImputer
 from sklearn.metrics._scorer import _BaseScorer
@@ -73,7 +73,7 @@ from slc.features import (
 def _target2raster(
     target: pd.Series | pd.DataFrame,
     indices: np.ndarray,
-    plot_shape: Tuple[int, int, int],
+    plot_shape: tuple[int, int, int],
     area2mixture: bool = False,
 ) -> np.ndarray:
     # Create target values array of shape (n_samples, n_features)
@@ -121,7 +121,7 @@ def _build_pipeline(
     do_standardize: bool,
     do_pca: bool,
     n_components: int | None,
-    model_params: Dict[str, Any],
+    model_params: dict[str, Any],
 ) -> Pipeline:
     # Set params first, as it can change _has_nan_error
     model = model.set_params(**model_params)
@@ -145,8 +145,8 @@ def _build_pipeline(
 def _study2model(
     study: optuna.study.Study,
     model: BaseEstimator,
-    data: npt.ArrayLike,
-    target: npt.ArrayLike,
+    data: pd.DataFrame,
+    target: pd.Series,
 ) -> Pipeline:
     # Define preprocessing steps for best model
     model_params = {
@@ -178,7 +178,7 @@ def _study2model(
 def _create_paths(
     model: BaseEstimator,
     save_folder: str,
-) -> Tuple[Path, Path, Path]:
+) -> tuple[Path, Path, Path]:
     save_path_obj = Path(save_folder)
     if not save_path_obj.parent.exists():
         raise ValueError(
@@ -196,12 +196,12 @@ def _create_paths(
 
 @typechecked
 def _check_save_folder(
-    model: BaseEstimator,
-    data: npt.ArrayLike,
-    target: npt.ArrayLike,
+    model: ClassifierMixin,
+    data: pd.DataFrame,
+    target: pd.Series,
     save_folder: str | None,
     use_caching: bool,
-) -> Tuple[Pipeline, optuna.study.Study] | None:
+) -> tuple[Pipeline, optuna.study.Study] | None:
     # Check for valid save_path
     if save_folder is not None:
         study_path, model_path, _ = _create_paths(model, save_folder)
@@ -260,7 +260,7 @@ def _save_study_model(
 
 
 @typechecked
-def _get_composite_params() -> Dict[str, int]:
+def _get_composite_params() -> dict[str, int]:
     compositing_path = "../reports/compositing.csv"
 
     try:
@@ -341,7 +341,7 @@ def bands_from_importance(
     band_importance_path: str,
     top_n: int | None = None,
     level_2a: bool = True,
-) -> Tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Extracts the band names of Sentinel-2 bands and indices from the band importance file.
 
     The best/top_n bands are read from the band importance file. Those bands are then divided into Sentinel-2 bands and indices.
@@ -356,6 +356,7 @@ def bands_from_importance(
 
     Returns:
         Tuple of lists of Sentinel-2 band names and index names as strings.
+
     """
     # Check path
     if not Path(band_importance_path).exists():
@@ -396,12 +397,13 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
 
     Returns:
         Scorer with modified score function.
+
     """
     score_func = scorer._score_func  # pylint: disable=protected-access
 
     def mixture_score_func(
-        target_true: npt.ArrayLike,
-        target_pred: npt.ArrayLike,
+        target_true: pd.Series,
+        target_pred: pd.Series,
         *args,
         **kwargs,
     ) -> Callable:
@@ -422,10 +424,10 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
 
 @typechecked
 def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
-    model: BaseEstimator,
-    search_space: List[Tuple[str, Tuple, Dict[str, Any]]],
-    data: npt.ArrayLike,
-    target: npt.ArrayLike,
+    model: ClassifierMixin,
+    search_space: list[tuple[str, tuple, dict[str, Any]]],
+    data: pd.DataFrame,
+    target: pd.Series,
     scorer: _BaseScorer,
     cv: int | BaseCrossValidator = 5,
     n_trials: int = 100,
@@ -434,7 +436,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     save_folder: str | None = None,
     use_caching: bool = True,
     always_standardize: bool = False,
-) -> Tuple[Pipeline, optuna.study.Study]:
+) -> tuple[Pipeline, optuna.study.Study]:
     """Performs hyperparameter search for a model using Optuna.
 
     The search space will be explored using Optuna's TPE sampler, together with standardization and PCA for preprocessing. The best pipeline object will be returned along with the Optuna study. A KNNImputer is used for estimators not supporting NaN values.
@@ -467,6 +469,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
 
     Returns:
         Tuple of the best pipeline and the Optuna study.
+
     """
     result = _check_save_folder(
         model,
@@ -585,6 +588,7 @@ def cv_predict(
 
     Returns:
         A numpy raster of the prediction in the format of read() from rasterio.
+
     """
     # Make paths Path objects
     data_path = Path(data_path)
@@ -634,6 +638,7 @@ def create_data(
             Number of samples to download at a time. Defaults to None.
         top_n:
             Number of most important bands to use for the composites. Uses number of bands that lead to max score if None. Defaults to None.
+
     """
     # Make paths Path objects
     target_path = Path(target_path)

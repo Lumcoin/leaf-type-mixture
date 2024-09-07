@@ -1,40 +1,64 @@
-[tool.poetry]
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
 name = "slc"
 version = "1.0.0"
-description = "Predicting leaf type mixture using tailored sentinel-2 composites."
-
-license = "MIT"
-
+dependencies = [
+  "aiohttp",
+  "dask[dataframe,distributed]",
+  "dill",
+  "earthengine-api",
+  "eemont",
+  "geopandas",
+  "ipykernel",
+  "ipywidgets",
+  "rasterio",
+  "matplotlib",
+  "nest_asyncio",
+  "numpy",
+  "optuna",
+  "pandas",
+  "pyproj",
+  "requests",
+  "scikit-elm",
+  "scikit-learn",
+  "SciencePlots",
+  "seaborn",
+  "tqdm",
+  "typeguard",
+  "utm",
+  "xgboost",
+]
+requires-python = ">=3.10"
 authors = [
-    "Peter Hofinger <hofinger-peter@gmx.de>"
+  {name = "Peter Hofinger Gedam", email = "hofinger-peter@gmx.de"},
+]
+maintainers = [
+  {name = "Peter Hofinger Gedam", email = "hofinger-peter@gmx.de"},
+]
+description = "Classify leaf type using tailored sentinel-2 composites."
+readme = "README.md"
+license = {file = "LICENSE"}
+keywords = ["remote-sensing", "leaf-type", "sentinel", "sentinel-2", "google-earth-engine"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Programming Language :: Python"
 ]
 
-repository = "https://github.com/peter-hofinger/sentinel-leaf-classifier"
+[project.optional-dependencies]
+test = ["pytest"]
+doc = ["mkdocs"]
 
-readme = ["README.md", "LICENSE"]
+[project.urls]
+Repository = "https://github.com/peter-hofinger/sentinel-leaf-classifier"
 
-[tool.poetry.dependencies]
-python = ">=3.10"
-aiohttp = "*"
-dask = {extras = ["dataframe", "distributed"], version = "*"}
-dill = "*"
-earthengine-api = "*"
-eemont = "*"
-geopandas = "*"
-ipywidgets = "*"
-rasterio = "*"
-matplotlib = "*"
-nest_asyncio = "*"
-numpy = "*"
-optuna = "*"
-pandas = "*"
-pyproj = "*"
-requests = "*"
-scikit-elm = "*"
-scikit-learn = "*"
-SciencePlots = "*"
-seaborn = "*"
-tqdm = "*"
-typeguard = "4.2.1"
-utm = "*"
-xgboost = "*"
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = ["E501", "COM812", "I001"]  # E501: line too long
+                                     # COM812: missing trailing comma
+                                     # I001: isort found unsorted imports
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = false

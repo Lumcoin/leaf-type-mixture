@@ -1,9 +1,10 @@
 __pycache__/
 
-ltm.yml
+.DS_Store
 *.egg-info/
 .coverage
 .vscode/
+dist/
 
 /artifacts/
 /data/

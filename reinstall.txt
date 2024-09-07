@@ -1,0 +1,9 @@
+mamba activate base
+mamba remove -n slc --all
+mamba clean --all -y
+pip cache purge
+mamba update mamba conda python
+pip install --upgrade pip
+mamba create -n slc -y xgboost uv
+mamba activate slc
+uv pip install -e .

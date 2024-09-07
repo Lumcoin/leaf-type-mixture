@@ -10,7 +10,7 @@ jobs:
   lint:
     name: Ruff
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 1
 
     steps:
       - uses: actions/checkout@v4
@@ -28,24 +28,11 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Create and activate virtual environment
-        run: python -m venv .venv
       - name: Install uv
         run: pip install uv
-      - name: Verify uv installation
-        run: uv --version
-      - name: Build package
-        run: |
-          source .venv/bin/activate
-          uv pip install poetry
-          python -m poetry build
       - name: Install package
-        run: |
-          wheel_file=$(ls dist/*.whl)
-          uv pip install $wheel_file
-      - name: Install ruff and pylint
-        run: uv pip install pytest
+        run: uv pip install --system -e .
+      - name: Install pytest
+        run: uv pip install --system pytest
       - name: Run Tests
-        run: |
-          source .venv/bin/activate
-          python -m pytest
+        run: python -m pytest
