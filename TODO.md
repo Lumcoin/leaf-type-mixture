@@ -9,7 +9,7 @@ Each notebook has legacy markdown that needs to be rewritten to match the curren
 - [ ] Update any data loading and preprocessing markdown.
 - [ ] Rewrite explanations for analysis steps.
 - [ ] Update conclusions and summary markdown.
-- [ ] Enable figure saving for all plots.
+- [ ] Enable figure saving for all plots. (single function call -> skip if exists, mkdir, save)
 
 ### 1.2 `band importance` Notebook
 - [x] Make the code ruff compliant.
@@ -28,7 +28,7 @@ Each notebook has legacy markdown that needs to be rewritten to match the curren
 - [ ] Enable figure saving for all plots.
 
 ### 1.4 `hyperparameter tuning` Notebook
-- [ ] Make the code ruff compliant.
+- [x] Make the code ruff compliant.
 - [ ] Review and rewrite the introduction section.
 - [ ] Update markdown for the hyperparameter tuning process.
 - [ ] Rewrite explanations for any optimization results.
@@ -36,7 +36,7 @@ Each notebook has legacy markdown that needs to be rewritten to match the curren
 - [ ] Enable figure saving for all plots.
 
 ### 1.5 `Generalization` Notebook
-- [ ] Make the code ruff compliant.
+- [x] Make the code ruff compliant.
 - [ ] Review and rewrite the introduction section.
 - [ ] Update markdown for the generalization techniques.
 - [ ] Rewrite explanations for results and discussions.
@@ -47,23 +47,23 @@ Each notebook has legacy markdown that needs to be rewritten to match the curren
 The `slc` package needs to be checked against any Ruff linting warnings.
 
 ### 2.1 `__init__.py`
-- [ ] Run Ruff linting on `slc/__init__.py`.
+- [x] Run Ruff linting on `slc/__init__.py`.
 - [ ] Resolve any warnings or errors.
 
 ### 2.2 `data` Module
-- [ ] Run Ruff linting on `slc/data.py`.
+- [x] Run Ruff linting on `slc/data.py`.
 - [ ] Resolve any warnings or errors.
 
 ### 2.3 `features` Module
-- [ ] Run Ruff linting on `slc/features.py`.
+- [x] Run Ruff linting on `slc/features.py`.
 - [ ] Resolve any warnings or errors.
 
 ### 2.4 `models` Module
-- [ ] Run Ruff linting on `slc/models.py`.
+- [x] Run Ruff linting on `slc/models.py`.
 - [ ] Resolve any warnings or errors.
 
 ### 2.5 `visualize` Module
-- [ ] Run Ruff linting on `slc/visualize.py`.
+- [x] Run Ruff linting on `slc/visualize.py`.
 - [ ] Resolve any warnings or errors.
 
 ## 3. Updating Tests
@@ -119,3 +119,4 @@ Ensure other repository files are up-to-date and consistent with the current ver
 ## Final steps
 - [ ] Check if the company allows the publishing of all CSV dataset files
 - [ ] Rerun all notebooks and hyperparam tune ALL models with 1000 iterations
+- [ ] Remove similarity matrix

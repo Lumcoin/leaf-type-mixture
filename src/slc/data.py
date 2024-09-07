@@ -32,10 +32,10 @@ Typical usage example:
 
 import asyncio
 import datetime
-import xml.etree.ElementTree as ET
 from collections import defaultdict
 from collections.abc import Coroutine
 from functools import lru_cache
+from http import HTTPStatus
 from itertools import product
 from numbers import Number
 from os import PathLike
@@ -54,6 +54,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 import utm
+from defusedxml.ElementTree import parse
 from pyproj import CRS
 from rasterio.io import MemoryFile
 from tqdm.notebook import tqdm
@@ -83,7 +84,8 @@ def _initialize_ee() -> None:
 @typechecked
 def _check_time_window(
     time_window: tuple[datetime.date, datetime.date],
-    level_2a: bool,
+    *,
+    level_2a: bool = True,
 ) -> None:
     start, end = [round(time.timestamp() * 1000) for time in time_window]
     if start >= end:
@@ -91,8 +93,10 @@ def _check_time_window(
         raise ValueError(
             msg,
         )
-    if level_2a and time_window[0] < datetime.datetime(2017, 3, 28):
-        if time_window[0] >= datetime.datetime(2015, 6, 27):
+
+    tz = ZoneInfo("UTC")
+    if level_2a and time_window[0] < datetime.datetime(2017, 3, 28, tzinfo=tz):
+        if time_window[0] >= datetime.datetime(2015, 6, 27, tzinfo=tz):
             msg = "Level-2A data is not available before 2017-03-28. Use Level-1C data instead."
             raise ValueError(msg)
 
@@ -144,11 +148,14 @@ def _check_path(
     for path in paths:
         pathlib = Path(path)
         if pathlib.suffix != suffix:
-            raise ValueError(f"{path} must end with {suffix}")
+            msg = f"{path} must end with {suffix}"
+            raise ValueError(msg)
         if check_parent and not pathlib.parent.exists():
-            raise ValueError(f"{path} parent directory does not exist")
+            msg = f"{path} parent directory does not exist"
+            raise ValueError(msg)
         if check_self and not pathlib.exists():
-            raise ValueError(f"{path} does not exist")
+            msg = f"{path} does not exist"
+            raise ValueError(msg)
 
 
 @typechecked
@@ -162,7 +169,7 @@ def _check_band_limit(
 ) -> None:
     # Compute number of bands
     if sentinel_bands is None:
-        num_bands = len(list_bands(level_2a))
+        num_bands = len(list_bands(level_2a=level_2a))
     else:
         num_bands = len(sentinel_bands)
 
@@ -170,15 +177,14 @@ def _check_band_limit(
         num_bands += len(indices)
 
     # Compute number of reducers
-    if temporal_reducers is None:
-        num_reducers = 1
-    else:
-        num_reducers = len(temporal_reducers)
+    num_reducers = 1 if temporal_reducers is None else len(temporal_reducers)
 
     total_bands = num_bands * num_reducers * num_composites
-    if total_bands > 5000:
+    max_bands = 5000
+    if total_bands > max_bands:
+        msg = f"You exceed the 5000 bands max limit of GEE: {total_bands} bands"
         raise ValueError(
-            f"You exceed the 5000 bands max limit of GEE: {total_bands} bands",
+            msg,
         )
 
 
@@ -191,27 +197,26 @@ def _sentinel_crs(
     is_south = utm.latitude_to_zone_letter(latitude) < "N"
 
     crs = CRS.from_dict({"proj": "utm", "zone": zone_number, "south": is_south})
-    crs = f"EPSG:{crs.to_epsg()}"
 
-    return crs
+    return f"EPSG:{crs.to_epsg()}"
 
 
 @typechecked
 def _split_time_window(
     time_window: tuple[datetime.date, datetime.date],
     num_splits: int,
-    level_2a: bool,
+    *,
+    level_2a: bool = True,
 ) -> list[tuple[datetime.date, datetime.date]]:
-    _check_time_window(time_window, level_2a)
+    _check_time_window(time_window, level_2a=level_2a)
 
     start = time_window[0]
     end = time_window[1]
     delta = (end - start + datetime.timedelta(days=1)) / num_splits
 
     if delta.days < 1:
-        raise ValueError(
-            f"Time window {time_window} is too small to split into {num_splits} sub windows",
-        )
+        msg = f"Time window {time_window} is too small to split into {num_splits} sub windows"
+        raise ValueError(msg)
 
     sub_windows = []
     for i in range(num_splits):
@@ -236,7 +241,8 @@ def _get_roi_scale_crs(
         crs = src.crs.to_string()
         res = src.res
         if res[0] != res[1]:
-            raise ValueError("resolution is not square!")
+            msg = "resolution is not square!"
+            raise ValueError(msg)
         scale = res[0]
         bounds = src.bounds
 
@@ -256,19 +262,23 @@ def _select_bands(
     s2_window: ee.ImageCollection,
     sentinel_bands: list[str] | None,
     indices: list[str] | None,
-    level_2a: bool,
-    remove_clouds: bool,
+    *,
+    level_2a: bool = True,
+    remove_clouds: bool = True,
 ) -> ee.ImageCollection:
     # Check sentinel_bands and indices
     within_desc = "Level 2A" if level_2a else "Level 1C"
-    _check_items(sentinel_bands, list_bands(level_2a), "sentinel_bands", within_desc)
+    _check_items(
+        sentinel_bands, list_bands(level_2a=level_2a), "sentinel_bands", within_desc
+    )
     _check_items(indices, list_indices(), "indices", "eemont package")
 
     # Combine bands and indices
-    if sentinel_bands is None:
-        bands = list_bands(level_2a)
-    else:
-        bands = sentinel_bands.copy()
+    bands = (
+        list_bands(level_2a=level_2a)
+        if sentinel_bands is None
+        else sentinel_bands.copy()
+    )
     if indices is not None:
         bands += indices
 
@@ -336,9 +346,7 @@ def _reduce_window(
         reduced_images.append(reduced_image)
 
     # Combine reduced_images into one image
-    datum = ee.ImageCollection(reduced_images).toBands()
-
-    return datum
+    return ee.ImageCollection(reduced_images).toBands()
 
 
 @typechecked
@@ -384,20 +392,21 @@ def _prettify_band_names(image: ee.Image) -> ee.Image:
 
         pretty_names.append(pretty_name)
 
-    image = image.rename(pretty_names)
-
-    return image
+    return image.rename(pretty_names)
 
 
 @typechecked
 async def _fetch(
     url: str,
 ) -> bytes:
-    async with aiohttp.ClientSession(read_timeout=60 * 60) as session:
-        async with session.get(url) as response:
-            if response.status != 200:
-                raise ValueError(f"Failed to fetch {url}")
-            return await response.read()
+    async with (
+        aiohttp.ClientSession(read_timeout=60 * 60) as session,
+        session.get(url) as response,
+    ):
+        if response.status != HTTPStatus.OK:
+            msg = f"Failed to fetch {url}"
+            raise ValueError(msg)
+        return await response.read()
 
 
 @typechecked
@@ -415,8 +424,8 @@ async def _async_gather(
     *coroutines: Coroutine,
     desc: str | None = None,
 ) -> list[Any]:
-    # Without tqdm
-    if len(coroutines) < 2:
+    tqdm_threshold = 2
+    if len(coroutines) < tqdm_threshold:
         return await asyncio.gather(*coroutines)
 
     with tqdm(total=len(coroutines), desc=desc) as pbar:
@@ -443,17 +452,13 @@ def _gather(
         return asyncio.run(_async_gather(*coroutines, desc=desc))
 
     # Create iterable
-    if len(coroutines) < 2:
-        iterable = coroutines
-    else:
-        iterable = tqdm(coroutines, desc=desc)
+    tqdm_threshold = 2
+    iterable = (
+        coroutines if len(coroutines) < tqdm_threshold else tqdm(coroutines, desc=desc)
+    )
 
     # Run synchronously
-    results = []
-    for coroutine in iterable:
-        results.append(asyncio.run(coroutine))
-
-    return results
+    return [asyncio.run(coroutine) for coroutine in iterable]
 
 
 @typechecked
@@ -475,16 +480,20 @@ def _responses2data(
     image: bytes,
     mask: bytes,
 ) -> tuple[rasterio.profiles.Profile, np.ndarray]:
-    with MemoryFile(image) as memfile, MemoryFile(mask) as mask_memfile:
-        with memfile.open() as dataset, mask_memfile.open() as mask_dataset:
-            # Get profile and set nodata to np.nan
-            profile = dataset.profile
-            profile["nodata"] = np.nan
+    with (
+        MemoryFile(image) as memfile,
+        MemoryFile(mask) as mask_memfile,
+        memfile.open() as dataset,
+        mask_memfile.open() as mask_dataset,
+    ):
+        # Get profile and set nodata to np.nan
+        profile = dataset.profile
+        profile["nodata"] = np.nan
 
-            # Read and mask raster
-            raster = dataset.read()
-            mask_raster = mask_dataset.read()
-            raster[mask_raster == 0] = np.nan
+        # Read and mask raster
+        raster = dataset.read()
+        mask_raster = mask_dataset.read()
+        raster[mask_raster == 0] = np.nan
 
     return profile, raster
 
@@ -504,9 +513,8 @@ async def _get_image_data(
         image_response = await _fetch_image(image)
         mask_response = await _fetch_image(image.mask())
     except ee.ee_exception.EEException as exc:
-        raise ValueError(
-            "Failed to compute image. A small batch_size might fix this error.",
-        ) from exc
+        msg = "Failed to compute image. A small batch_size might fix this error."
+        raise ValueError(msg) from exc
 
     # Get profile and raster
     profile, raster = _responses2data(
@@ -528,7 +536,8 @@ def _save_image(
     # Check file path and batch size
     _check_path(file_path, suffix=".tif", check_self=False)
     if not (batch_size is None or batch_size > 0):
-        raise ValueError("batch_size must be a positive integer or None")
+        msg = "batch_size must be a positive integer or None"
+        raise ValueError(msg)
 
     # Get image data
     profile = None
@@ -541,7 +550,8 @@ def _save_image(
     band_batches = [bands[i : i + batch_size] for i in range(0, len(bands), batch_size)]
 
     # Warn user of GEE quota limits
-    if len(band_batches) > 40:
+    limit = 40
+    if len(band_batches) > limit:
         print(
             "Warning: Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size to reduce the number of batches.",
         )
@@ -552,7 +562,7 @@ def _save_image(
         results = _gather(*coroutines, desc="Batches")
     except (aiohttp.ClientError, ValueError) as exc:
         if len(band_batches) == 1:
-            raise exc
+            raise ValueError from exc
         print("Failed to download asynchroniously. Trying synchroniously...")
         coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches", asynchronous=False)
@@ -617,9 +627,7 @@ def _compute_area(
 
     # Reduce to coarse resolution
     fc_area = fc_area.reproject(scale=fine_scale, crs=crs)
-    fc_area = fc_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
-
-    return fc_area
+    return fc_area.reduceResolution(ee.Reducer.mean(), maxPixels=10_000)
 
 
 @typechecked
@@ -627,10 +635,12 @@ def _check_plot(
     plot: pd.DataFrame,
 ) -> pd.DataFrame:
     if len(plot) == 0:
-        raise ValueError("Empty plot DataFrame")
+        msg = "Empty plot DataFrame"
+        raise ValueError(msg)
 
     if plot.isna().any(axis=None):
-        raise ValueError("NaN values found in plot DataFrame")
+        msg = "NaN values found in plot DataFrame"
+        raise ValueError(msg)
 
     plot = plot.rename(columns=str.lower)
 
@@ -644,21 +654,19 @@ def _check_plot(
     expected_columns = set(expected_dtypes.keys())
     columns = set(plot.columns)
     if expected_columns != columns.intersection(expected_columns):
-        raise ValueError("Columns do not match expected columns")
+        msg = "Columns do not match expected columns"
+        raise ValueError(msg)
 
-    plot = plot.astype(expected_dtypes)
-
-    return plot
+    return plot.astype(expected_dtypes)
 
 
-# TODO: check if quick implementation is correct
 @typechecked
 def _compute_target(
     genus_dict: dict[str, ee.FeatureCollection],
     plot: pd.DataFrame,
 ) -> tuple[ee.Image, tuple[ee.Geometry, float, str]]:
     # Get region of interest (ROI)
-    total_fc = list(genus_dict.values())[0]
+    total_fc = next(iter(genus_dict.values()))
     for fc in list(genus_dict.values())[1:]:
         total_fc = total_fc.merge(fc)
     roi = total_fc.geometry()
@@ -672,18 +680,22 @@ def _compute_target(
 
     # Check if rectangle has reasonable size
     roi_area = roi.area(0.01).getInfo()
+    max_area = 1e7
     if roi_area == 0:
+        msg = "Plot bounding box has area 0. Check if plot coordinates are valid."
         raise ValueError(
-            "Plot bounding box has area 0. Check if plot coordinates are valid.",
+            msg,
         )
-    if roi_area > 1e7:
+    if roi_area > max_area:
+        msg = f"Plot bounding box has area > {max_area}. Check if plot coordinates are valid."
         raise ValueError(
-            "Plot bounding box has area > 1e7. Check if plot coordinates are valid.",
+            msg,
         )
 
     # Render plot as fine resolution image, then reduce to coarse resolution
     fine_scale = min(plot["dbh"].min() * 5, SCALE)
-    if plot["dbh"].min() < 0.05:
+    smallest_dbh = 0.05
+    if plot["dbh"].min() < smallest_dbh:
         print("Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
         fine_scale = 0.25
 
@@ -693,8 +705,8 @@ def _compute_target(
         genus_areas[genus] = _compute_area(fc, SCALE, fine_scale, crs)
 
     # Compute target (conifer proportion) from broadleaf_area and conifer_area
-    target = list(genus_areas.values())[0]
-    total_area = list(genus_areas.values())[0]
+    target = next(iter(genus_areas.values()))
+    total_area = next(iter(genus_areas.values()))
     for genus_area in list(genus_areas.values())[1:]:
         target = target.addBands(genus_area)
         total_area = total_area.add(genus_area)
@@ -708,10 +720,9 @@ def _compute_target(
 @lru_cache
 @typechecked
 def list_reducers(*, use_buffered_reducers: bool = True) -> list[str]:
-    """Lists all valid reducers in the Earth Engine API.
+    """List all valid reducers in the Earth Engine API.
 
     Args:
-    ----
         use_buffered_reducers:
             A boolean indicating whether to use the buffered reducers. If False the Google Earth Engine API is used to retrieve all current reducers (slow). Defaults to True.
 
@@ -797,10 +808,9 @@ def list_reducers(*, use_buffered_reducers: bool = True) -> list[str]:
 @lru_cache
 @typechecked
 def list_reducer_bands(reducer: str) -> list[str] | None:
-    """Lists all valid bands for a given reducer in the Earth Engine API.
+    """List all valid bands for a given reducer in the Earth Engine API.
 
     Args:
-    ----
         reducer:
             A string representing the reducer. Run list_reducers() to get all valid reducer names.
 
@@ -820,18 +830,15 @@ def list_reducer_bands(reducer: str) -> list[str] | None:
     if len(band_names) == 1:
         return None
 
-    reducer_bands = [band_name.split("_", 1)[1] for band_name in band_names]
-
-    return reducer_bands
+    return [band_name.split("_", 1)[1] for band_name in band_names]
 
 
 @lru_cache
 @typechecked
 def list_bands(*, level_2a: bool = True) -> list[str]:
-    """Lists all valid Sentinel-2 bands offered by the Earth Engine API.
+    """List all valid Sentinel-2 bands offered by the Earth Engine API.
 
     Args:
-    ----
         level_2a:
             A boolean indicating whether to list bands from Level-2A or Level-1C Sentinel-2 data. Level-2A if True. Defaults to True.
 
@@ -848,15 +855,14 @@ def list_bands(*, level_2a: bool = True) -> list[str]:
         s2 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
     else:
         s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
-    bands = s2.first().bandNames().getInfo()
 
-    return bands
+    return s2.first().bandNames().getInfo()
 
 
 @lru_cache
 @typechecked
 def list_indices() -> list[str]:
-    """Lists all valid indices for Sentinel-2 offered by eemont.
+    """List all valid indices for Sentinel-2 offered by eemont.
 
     Returns
     -------
@@ -887,10 +893,9 @@ def combine_band_name(
     reducer: str,
     reducer_band: str | None = None,
 ) -> str:
-    """Combines a composite index, band label and reducer (+ reducer band) into a single band name.
+    """Combine a composite index, band label and reducer (+ reducer band) into a single band name.
 
     Args:
-    ----
         composite_idx:
             An integer for the composite index starting at 1.
         band:
@@ -915,11 +920,11 @@ def combine_band_name(
 
 @typechecked
 def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
-    """Splits a band name into its composite index, band label and reducer (+ reducer band).
+    """Split a band name into its composite index, band label and reducer (+ reducer band).
 
     Args:
-    ----
-        A string for the band name. Expects format of combine_band_name().
+        band_name:
+            A string for the band name. Expects format of combine_band_name().
 
     Returns:
     -------
@@ -928,12 +933,15 @@ def split_band_name(band_name: str) -> tuple[int, str, str, str | None]:
     """
     # Split band name
     parts = band_name.split(" ")
-    if not 3 <= len(parts) <= 4:
-        raise ValueError("Band name does not have the expected format")
+    valid_num_parts = [3, 4]
+    if len(parts) not in valid_num_parts:
+        msg = "Band name does not have the expected format"
+        raise ValueError(msg)
 
     # Extract parts
-    composite_idx, band, reducer = parts[:3]
-    reducer_band = None if len(parts) == 3 else parts[3]
+    num_elems = 3
+    composite_idx, band, reducer = parts[:num_elems]
+    reducer_band = None if len(parts) == num_elems else parts[num_elems]
 
     return int(composite_idx), band, reducer, reducer_band
 
@@ -945,12 +953,11 @@ def compute_target(
     *,
     retry: bool = True,
 ) -> None:
-    """Computes the label for a plot.
+    """Compute the label for a plot.
 
     The resulting raster has values between 0 and 1 for the conifer proportion. 1 being fully conifer and 0 being fully broadleaf for a given raster cell. If area_as_target is True, the raster will contain the area of broadleafs and conifers in square meters per raster cell.
 
     Args:
-    ----
         target_path:
             A string or PathLike representing the file path to save the raster. The suffix '.tif' (GeoTIFF) is expected.
         plot:
@@ -999,13 +1006,13 @@ def compute_target(
             break
         except ee.ee_exception.EEException as exc:
             if not retry:
-                raise exc
+                raise ValueError from exc
             print("Failed to compute labels. Retrying...")
             continue
 
 
 @typechecked
-def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
+def sentinel_composite(  # noqa: PLR0913
     target_path_from: str | PathLike,
     data_path_to: str | PathLike,
     time_window: tuple[datetime.date, datetime.date],
@@ -1018,12 +1025,11 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
     level_2a: bool = True,
     remove_clouds: bool = True,
 ) -> None:
-    """Creates a composite from many Sentinel-2 satellite images for a given label image.
+    """Create a composite from many Sentinel-2 satellite images for a given label image.
 
     The raster will be saved to data_path_to after processing. The processing itself can take several minutes, depending on Google Earth Engine and the size of your region of interest. If you hit some limit of Google Earth Engine, the function will raise an error.
 
     Args:
-    ----
         target_path_from:
             A string or PathLike representing the file path to the label raster. This is used to derive the bounds, coordinate reference system and pixel size of the image. The suffix '.tif' (GeoTIFF) is expected.
         data_path_to:
@@ -1072,7 +1078,9 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
 
     # Compute composite for each time windows
     data = []
-    for start, end in _split_time_window(time_window, num_composites, level_2a):
+    for start, end in _split_time_window(
+        time_window, num_composites, level_2a=level_2a
+    ):
         # Filter by roi and timewindow
         s2_window = s2.filterDate(
             round(start.timestamp() * 1000),
@@ -1084,8 +1092,8 @@ def sentinel_composite(  # pylint: disable=too-many-arguments,too-many-locals
             s2_window,
             sentinel_bands,
             indices,
-            level_2a,
-            remove_clouds,
+            level_2a=level_2a,
+            remove_clouds=remove_clouds,
         )
 
         # Add to data
@@ -1109,10 +1117,9 @@ def shapefile2raster(
     shapefile_path: str | PathLike,
     raster_path: str | PathLike,
 ) -> None:
-    """Creates a raster mask from a shapefile.
+    """Create a raster mask from a shapefile.
 
     Args:
-    ----
         shapefile_path:
             A string or PathLike representing the file path to the shapefile. The suffix '.shp' is expected.
         raster_path:
@@ -1153,13 +1160,16 @@ def shapefile2raster(
 
     # Check if rectangle has reasonable size
     roi_area = roi.area(0.01).getInfo()
+    max_area = 1e10
     if roi_area == 0:
+        msg = "Plot bounding box has area 0. Check if plot coordinates are valid."
         raise ValueError(
-            "Plot bounding box has area 0. Check if plot coordinates are valid.",
+            msg,
         )
-    if roi_area > 1e10:
+    if roi_area > max_area:
+        msg = f"Plot bounding box has area > {max_area}. Check if plot coordinates are valid."
         raise ValueError(
-            "Plot bounding box has area > 1e10. Check if plot coordinates are valid.",
+            msg,
         )
 
     # Clip to roi and reproject
@@ -1179,12 +1189,11 @@ def download_dlt_2018(
     *,
     use_mask: bool = False,
 ) -> None:
-    """Downloads the Dominant Leaf Type (DLT) 2018 for a given reference raster.
+    """Download the Dominant Leaf Type (DLT) 2018 for a given reference raster.
 
     The saved DLT raster is a raster with the values 0 and 1 representing the dominant leaf type broadleaf and conifer respectively. Unlabeled pixels are NaN. The raster is saved to destination_path.
 
     Args:
-    ----
         reference_path:
             A string or PathLike representing the file path to the reference raster. The suffix '.tif' (GeoTIFF) is expected.
         destination_path:
@@ -1201,16 +1210,15 @@ def download_dlt_2018(
         nan_mask = np.all(np.isnan(src.read()), axis=0)
 
     # Get the layer name
-    url = "https://copernicus.discomap.eea.europa.eu/arcgis/services/GioLandPublic/HRL_DominanteLeafType_2018/ImageServer/WMSServer?request=GetCapabilities&service=WMS"
-    response = urlopen(url)
-    root = ET.parse(response).getroot()
+    response = urlopen(
+        "https://copernicus.discomap.eea.europa.eu/arcgis/services/GioLandPublic/HRL_DominanteLeafType_2018/ImageServer/WMSServer?request=GetCapabilities&service=WMS"
+    )
+    root = parse(response).getroot()
     layer = (
         next(root.iter("{http://www.opengis.net/wms}Layer"))
         .find("{http://www.opengis.net/wms}Name")
         .text
     )
-
-    url = "https://copernicus.discomap.eea.europa.eu/arcgis/services/GioLandPublic/HRL_DominanteLeafType_2018/ImageServer/WMSServer"
 
     params = {
         "request": "GetMap",
@@ -1222,21 +1230,25 @@ def download_dlt_2018(
         "crs": crs,
     }
 
-    url = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
+    with (
+        urlopen(
+            "https://copernicus.discomap.eea.europa.eu/arcgis/services/GioLandPublic/HRL_DominanteLeafType_2018/ImageServer/WMSServer?"
+            + "&".join([f"{k}={v}" for k, v in params.items()])
+        ) as response,
+        MemoryFile(response.read()) as memfile,
+        memfile.open() as src,
+    ):
+        img = src.read(1).astype(float)
+        valid_range = [1, 2]
+        img[(img < valid_range[0]) | (valid_range[1] < img)] = np.nan
+        img = img - 1
 
-    with urlopen(url) as response:
-        with MemoryFile(response.read()) as memfile:
-            with memfile.open() as src:
-                img = src.read(1).astype(float)
-                img[(img < 1) | (img > 2)] = np.nan
-                img = img - 1
+        if use_mask:
+            img[nan_mask] = np.nan
 
-                if use_mask:
-                    img[nan_mask] = np.nan
-
-                profile = src.profile
-                profile["dtype"] = rasterio.float32
-                profile["nodata"] = np.nan
+        profile = src.profile
+        profile["dtype"] = rasterio.float32
+        profile["nodata"] = np.nan
 
     with rasterio.open(destination_path, "w", **profile) as dst:
         dst.write(img, 1)

@@ -19,7 +19,7 @@ Typical usage example:
 """
 
 import io
-from typing import Any, List, Tuple
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,36 +32,41 @@ from slc.data import combine_band_name, split_band_name
 
 def _rgb_bands2indices(
     raster: np.ndarray | None = None,
-    bands: Tuple[str, ...] | None = None,
-    rgb_bands: List[str | None] | None = None,
-) -> List[str]:
+    bands: tuple[str, ...] | None = None,
+    rgb_bands: list[str | None] | None = None,
+) -> list[str]:
     # Check if bands or raster is provided
     if bands is None and raster is None:
-        raise ValueError("Either bands or raster must be provided")
+        msg = "Either bands or raster must be provided"
+        raise ValueError(msg)
 
     # Check whether bands exists if rgb_bands is not None
     if rgb_bands is not None and bands is None:
-        raise ValueError("bands must not be None if rgb_bands is not None")
+        msg = "bands must not be None if rgb_bands is not None"
+        raise ValueError(msg)
 
     # Check if bands is equal to the number of bands in raster
     if bands is not None and len(bands) != raster.shape[0]:
-        raise ValueError(
-            f"bands must have same length as number of bands in raster: len(bands)={len(bands)} != raster.shape[0]={raster.shape[0]}"
-        )
+        msg = f"bands must have same length as number of bands in raster: len(bands)={len(bands)} != raster.shape[0]={raster.shape[0]}"
+        raise ValueError(msg)
 
     # Default bands to tuple of integers if None
-    if bands is None:
-        bands = tuple(str(number) for number in range(raster.shape[0]))
+    bands = (
+        bands
+        if bands is not None
+        else tuple(str(number) for number in range(raster.shape[0]))
+    )
 
     # Check if rgb_bands has length of three or is None
-    if rgb_bands is not None and len(rgb_bands) != 3:
-        raise ValueError("rgb_bands must be a list of length 3 or None")
+    if rgb_bands is not None and len(rgb_bands) != 3:  # noqa: PLR2004
+        msg = "rgb_bands must be a list of length 3 or None"
+        raise ValueError(msg)
 
     # Fill rgb_bands with bands and maybe None if it is None
     if rgb_bands is None:
         if len(bands) == 1:
             rgb_bands = [bands[0]] * 3
-        elif len(bands) == 2:
+        elif len(bands) == 2:  # noqa: PLR2004
             rgb_bands = [bands[0], bands[1], None]
         else:
             rgb_bands = list(bands[:3])
@@ -80,11 +85,12 @@ def _rgb_bands2indices(
 @typechecked
 def _raster2rgb(
     raster: np.ndarray,
-    bands: Tuple[str, ...] | None = None,
-    rgb_bands: List[str | None] | None = None,
+    bands: tuple[str, ...] | None = None,
+    rgb_bands: list[str | None] | None = None,
+    *,
     mask_nan: bool = True,
 ) -> np.ndarray:
-    """Creates an RGB image from a rasterio raster.
+    """Create an RGB image from a rasterio raster.
 
     Args:
         raster:
@@ -98,6 +104,7 @@ def _raster2rgb(
 
     Returns:
         A NumPy array RGB image.
+
     """
     # Get RGB band indices
     rgb_indices = _rgb_bands2indices(raster, bands, rgb_bands)
@@ -123,9 +130,9 @@ def _raster2rgb(
 
 @typechecked
 def _plot_timeseries(
-    rgb_rasters: List[np.ndarray],
+    rgb_rasters: list[np.ndarray],
     reducer_title: str,
-) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
+) -> tuple[plt.Figure, np.ndarray[plt.Axes]]:
     # Get num_composites
     num_composites = len(rgb_rasters)
 
@@ -138,13 +145,13 @@ def _plot_timeseries(
     if num_composites == 1:
         axs = np.array([axs])
     fig.tight_layout()
-    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters), start=1):
+    for i, (ax, rgb_raster) in enumerate(zip(axs, rgb_rasters, strict=False), start=1):
         # normalize values and apply gamma correction
-        rgb_raster -= min_value
-        rgb_raster /= max_value - min_value
-        rgb_raster **= 1 / 2.2
-        rgb_raster[np.isnan(rgb_raster)] = 0
-        ax.imshow(rgb_raster)
+        display_raster = rgb_raster - min_value
+        display_raster /= max_value - min_value
+        display_raster **= 1 / 2.2
+        display_raster[np.isnan(display_raster)] = 0
+        ax.imshow(display_raster)
         ax.set_title(f"{i} {reducer_title}")
         ax.axis("off")
 
@@ -157,9 +164,9 @@ def _plot_timeseries(
 def show_timeseries(
     raster_path: str,
     reducer: str,
-    rgb_bands: List[str] | None = None,
-) -> Tuple[plt.Figure, np.ndarray[plt.Axes]]:
-    """Shows a timeseries of composites.
+    rgb_bands: list[str] | None = None,
+) -> tuple[plt.Figure, np.ndarray[plt.Axes]]:
+    """Show a timeseries of composites.
 
     Args:
         raster_path:
@@ -171,6 +178,7 @@ def show_timeseries(
 
     Returns:
         A tuple of the matplotlib figure and axes.
+
     """
     # Read raster and get band names
     with rasterio.open(raster_path) as src:
@@ -187,7 +195,8 @@ def show_timeseries(
     bands = [band.lower() for band in bands]
 
     if num_composites == 0:
-        raise ValueError(f"No bands found with reducer {reducer}")
+        msg = f"No bands found with reducer {reducer}"
+        raise ValueError(msg)
 
     # Get the rasters for the rgb bands
     rgb_rasters = []
@@ -214,17 +223,18 @@ def show_timeseries(
 
 
 @typechecked
-def plot_report(  # pylint: disable=too-many-arguments
+def plot_report(  # noqa: PLR0913
     df: pd.DataFrame,
     title: str | None = None,
     xlabel: str | None = None,
     ylabel: str | None = None,
     label_rotation: int = 0,
     replace_labels: dict | None = None,
+    *,
     categorical_x: bool = True,
-    **kwargs: Any,
+    **kwargs: Any,  # noqa: ANN401
 ) -> plt.Axes:
-    """Plots a DataFrame with a title, x and y label and legend.
+    """Plot a DataFrame with a title, x and y label and legend.
 
     The index of the DataFrame is used for the x-axis and the columns for the lines in the plot. The legend is placed to the right of the plot.
 
@@ -248,6 +258,7 @@ def plot_report(  # pylint: disable=too-many-arguments
 
     Returns:
         Axes of the plot.
+
     """
     # Create empty dictionary if replace is None
     if replace_labels is None:
@@ -268,7 +279,7 @@ def plot_report(  # pylint: disable=too-many-arguments
     # Replace labels
     labels = ax.get_legend_handles_labels()[1]
     for i, label in enumerate(labels):
-        if label in replace_labels.keys():
+        if label in replace_labels:
             labels[i] = replace_labels[label]
 
     # Set legend
@@ -280,7 +291,7 @@ def plot_report(  # pylint: disable=too-many-arguments
 
 @typechecked
 def fig2array(fig: plt.Figure | None = None) -> np.ndarray:
-    """Converts a matplotlib figure to a numpy array.
+    """Convert a matplotlib figure to a numpy array.
 
     Args:
         fig:
@@ -288,12 +299,11 @@ def fig2array(fig: plt.Figure | None = None) -> np.ndarray:
 
     Returns:
         Numpy array of the figure.
+
     """
     with io.BytesIO() as buff:
         if fig is None:
             fig = plt.gcf()
         fig.savefig(buff, format="png")
         buff.seek(0)
-        im = plt.imread(buff)
-
-    return im
+        return plt.imread(buff)

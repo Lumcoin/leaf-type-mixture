@@ -1,9 +1,8 @@
-import matplotlib
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
-
 from slc.visualize import fig2array, plot_report, show_timeseries
 
 
@@ -25,14 +24,14 @@ def test_fig2array():
 
 
 def test_plot_report():
-    df = pd.DataFrame(
+    dummy = pd.DataFrame(
         {
             "A": [1, 2, 3, 4],
             "B": [4, 3, 2, 1],
         }
     )
 
-    ax = plot_report(df, title="Test Plot", xlabel="X-axis", ylabel="Y-axis")
+    ax = plot_report(dummy, title="Test Plot", xlabel="X-axis", ylabel="Y-axis")
 
     assert isinstance(ax, plt.Axes)
     assert ax.get_title() == "Test Plot"
@@ -63,10 +62,10 @@ def test_show_timeseries(tmp_path):
         count=len(band_names),
         dtype="float32",
     ) as dst:
-        dst.write(np.random.rand(len(band_names), 10, 10))
+        dst.write(np.random.default_rng().random((len(band_names), 10, 10)))
         dst.descriptions = band_names
 
-    matplotlib.use("Agg")
+    mpl.use("Agg")
     fig, axes = show_timeseries(str(raster_path), reducer, rgb_bands)
 
     assert isinstance(fig, plt.Figure)

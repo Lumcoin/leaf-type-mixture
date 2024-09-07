@@ -15,10 +15,10 @@ Typical usage example:
     save_raster(data, data_path, "data_interpolated.tif")
 """
 
-import os
 from collections import defaultdict
 from os import PathLike
 from pathlib import Path
+from typing import Literal
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,7 +42,7 @@ def genera2target(
     regression: bool = False,
     evergreen_larix: bool = False,
 ) -> pd.Series | pd.DataFrame:
-    """Converts a DataFrame containing base area per genera to a Series or DataFrame containing the target.
+    """Convert a DataFrame containing base area per genera to a Series or DataFrame containing the target.
 
     Args:
         genera_areas:
@@ -91,7 +91,7 @@ def genera2target(
 
     target = genera_areas.copy()
     do_mask = target.isna().all(axis=1)
-    target.fillna(0, inplace=True)
+    target = target.fillna(0)
 
     evergreen_columns = [col for col in target.columns if evergreen[col]]
     evergreen_area = target[evergreen_columns].sum(axis=1)
@@ -118,7 +118,7 @@ def genera2target(
 def load_dataset(
     data_path: str | PathLike, target_path: str | PathLike
 ) -> tuple[pd.DataFrame, pd.Series]:
-    """Loads the dataset from the given paths.
+    """Load the dataset from the given paths.
 
     Args:
         data_path:
@@ -134,14 +134,13 @@ def load_dataset(
     target_path = Path(target_path)
 
     if data_path.is_dir() and target_path.is_dir():
-        data_names = set([f.name for f in data_path.glob("*.tif")])
-        target_names = set([f.name for f in target_path.glob("*.tif")])
+        data_names = {f.name for f in data_path.glob("*.tif")}
+        target_names = {f.name for f in target_path.glob("*.tif")}
         common_names = data_names.intersection(target_names)
 
         if not common_names:
-            raise FileNotFoundError(
-                "No common files found in data and target directories."
-            )
+            msg = "No common files found in data and target directories."
+            raise FileNotFoundError(msg)
 
         lonely_files = list(data_names.union(target_names).difference(common_names))
         if lonely_files:
@@ -159,22 +158,21 @@ def load_dataset(
         data = pd.concat(data)
         target = pd.concat(target)
 
-        data.reset_index(drop=True, inplace=True)
-        target.reset_index(drop=True, inplace=True)
+        data = data.reset_index(drop=True)
+        target = target.reset_index(drop=True)
     elif (not data_path.is_dir()) and (not target_path.is_dir()):
         data = load_raster(data_path)
         target = load_raster(target_path, monochrome_as_dataframe=True)
     else:
-        raise ValueError(
-            "Expected data_path and target_path to be either directories or files, got a mix instead."
-        )
+        msg = "Expected data_path and target_path to be either directories or files, got a mix instead."
+        raise ValueError(msg)
 
     target = genera2target(target)
 
     mask = target.notna()
     data, target = data[mask], target[mask]
-    data.reset_index(drop=True, inplace=True)
-    target.reset_index(drop=True, inplace=True)
+    data = data.reset_index(drop=True)
+    target = target.reset_index(drop=True)
 
     target = target.map({"evergreen": 1, "deciduous": 0})
 
@@ -186,7 +184,7 @@ def np2pd_like(
     np_obj: np.ndarray,
     like_pd_obj: pd.Series | pd.DataFrame,
 ) -> pd.Series | pd.DataFrame:
-    """Converts a numpy array to a pandas Series or DataFrame with the same column names or series name as the given pandas object.
+    """Convert a numpy array to a pandas Series or DataFrame with the same column names or series name as the given pandas object.
 
     Args:
         np_obj:
@@ -200,27 +198,25 @@ def np2pd_like(
     """
     if isinstance(like_pd_obj, pd.Series):
         if np_obj.ndim != 1:
-            raise ValueError(
-                f"Expected 1-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
-            )
+            msg = f"Expected 1-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
+            raise ValueError(msg)
         return pd.Series(np_obj, name=like_pd_obj.name)
 
     if isinstance(like_pd_obj, pd.DataFrame):
-        if np_obj.ndim != 2:
-            raise ValueError(
-                f"Expected 2-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
-            )
+        expected_ndim = 2
+        if np_obj.ndim != expected_ndim:
+            msg = f"Expected {expected_ndim}-dimensional numpy array, got {np_obj.ndim}-dimensional array instead."
+            raise ValueError(msg)
         if np_obj.shape[1] != len(like_pd_obj.columns):
-            raise ValueError(
-                f"Expected numpy array with {len(like_pd_obj.columns)} columns, got {np_obj.shape[1]} columns instead."
-            )
+            msg = f"Expected numpy array with {len(like_pd_obj.columns)} columns, got {np_obj.shape[1]} columns instead."
+            raise ValueError(msg)
 
     return pd.DataFrame(np_obj, columns=like_pd_obj.columns)
 
 
 @typechecked
 def to_float32(data: pd.DataFrame) -> pd.DataFrame:
-    """Converts the data to float32 and replaces infinities with the maximum and minimum float32 values.
+    """Convert the data to float32 and replaces infinities with the maximum and minimum float32 values.
 
     Args:
         data:
@@ -236,9 +232,8 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
         str(dtype) for dtype in dtypes if not np.issubdtype(dtype, np.number)
     ]
     if illegal_dtypes:
-        raise ValueError(
-            f"Expected numeric data, found {', '.join(illegal_dtypes)} instead."
-        )
+        msg = f"Expected numeric data, found {', '.join(illegal_dtypes)} instead."
+        raise ValueError(msg)
 
     data = data.copy()
 
@@ -247,9 +242,7 @@ def to_float32(data: pd.DataFrame) -> pd.DataFrame:
 
     data[data > float32_max] = float32_max
     data[data < float32_min] = float32_min
-    data = data.astype(np.float32)
-
-    return data
+    return data.astype(np.float32)
 
 
 @typechecked
@@ -277,12 +270,12 @@ def interpolate_data(
 
     """
     # Return if no NaN values found
-    if not data.isna().values.any():
+    if not data.isna().to_numpy().any():
         return data
 
     # Separate band names and values
     band_names = list(data.columns)
-    values = data.values
+    values = data.to_numpy()
 
     # Get the number of composites and number of bands
     num_composites = split_band_name(band_names[-1])[0]
@@ -292,25 +285,23 @@ def interpolate_data(
     reshaped = values.reshape(-1, num_composites, num_bands)
     reshaped = reshaped.transpose(0, 2, 1)
     reshaped = reshaped.reshape(-1, num_composites).T
-    df = pd.DataFrame(reshaped)
+    expanded = pd.DataFrame(reshaped)
 
     # Interpolate
     if cyclic:
-        df = pd.concat([df] * 3, ignore_index=True)
-    df.interpolate(method=method, inplace=True, order=order)
+        expanded = pd.concat([expanded] * 3, ignore_index=True)
+    expanded = expanded.interpolate(method=method, order=order)
     if cyclic:
-        start = len(df) // 3
-        end = 2 * len(df) // 3
-        df = df.iloc[start:end].reset_index(drop=True)
+        start = len(expanded) // 3
+        end = 2 * len(expanded) // 3
+        expanded = expanded.iloc[start:end].reset_index(drop=True)
 
     # Reshape back into original shape
-    interpolated_data = df.values.T.reshape(-1, num_bands, num_composites)
+    interpolated_data = expanded.to_numpy().T.reshape(-1, num_bands, num_composites)
     interpolated_data = interpolated_data.transpose(0, 2, 1)
     interpolated_data = interpolated_data.reshape(-1, num_bands * num_composites)
 
-    interpolated_data = pd.DataFrame(interpolated_data, columns=band_names)
-
-    return interpolated_data
+    return pd.DataFrame(interpolated_data, columns=band_names)
 
 
 @typechecked
@@ -319,7 +310,7 @@ def load_raster(
     *,
     monochrome_as_dataframe: bool = False,
 ) -> pd.DataFrame | pd.Series:
-    """Loads a raster and returns the data ready to use with sklearn.
+    """Load a raster and returns the data ready to use with sklearn.
 
     Args:
         raster_path:
@@ -331,12 +322,14 @@ def load_raster(
         A DataFrame containing the data with band names as column names. If the raster is monochrome and 'monochrome_as_dataframe' is False, a Series is returned instead. This is expected by sklearn.
 
     """
-    raster_path = str(raster_path)
+    raster_path = Path(raster_path)
     # Check if all paths are valid
-    if not raster_path.endswith(".tif"):
-        raise ValueError(f"Expected path to .tif file, got '{raster_path}' instead.")
-    if not os.path.exists(raster_path):
-        raise FileNotFoundError(f"Could not find file '{raster_path}'.")
+    if raster_path.suffix != ".tif":
+        msg = f"Expected path to .tif file, got '{raster_path}' instead."
+        raise ValueError(msg)
+    if not raster_path.exists():
+        msg = f"Could not find file '{raster_path}'."
+        raise FileNotFoundError(msg)
 
     with rasterio.open(raster_path) as src:
         raster = src.read()
@@ -359,7 +352,7 @@ def save_raster(
     source_path: str | PathLike,
     destination_path: str | PathLike,
 ) -> None:
-    """Saves the data as a raster image.
+    """Save the data as a raster image.
 
     Args:
         data:
@@ -371,7 +364,7 @@ def save_raster(
 
     """
     # Copy data
-    data_values = data.values.copy()
+    data_values = data.to_numpy().copy()
 
     # Read raster profile and shape
     with rasterio.open(source_path) as raster:
@@ -393,10 +386,10 @@ def save_raster(
 @typechecked
 def get_similarity_matrix(
     data: pd.DataFrame,
-    method: str = "pearson",
+    method: Literal["pearson", "spearman", "mutual_info"] = "pearson",
     seed: int | None = None,
 ) -> pd.DataFrame:
-    """Calculates the similarity matrix for the data.
+    """Calculate the similarity matrix for the data.
 
     Args:
         data:
@@ -412,17 +405,19 @@ def get_similarity_matrix(
     """
     # Check if all column names are unique
     if len(set(data.columns)) != len(data.columns):
-        raise ValueError("All column names must be unique.")
+        msg = "All column names must be unique."
+        raise ValueError(msg)
 
     # Check if method is valid
     valid_methods = ["pearson", "spearman", "mutual_info"]
     if method not in valid_methods:
-        raise ValueError(
+        msg = (
             f"Method must be one of {', '.join(valid_methods)}. Got '{method}' instead."
         )
+        raise ValueError(msg)
 
     # Calculate similarity matrix
-    data_values = data.values
+    data_values = data.to_numpy()
     if method == "pearson":
         similarity_matrix = np.corrcoef(data_values, rowvar=False)
     elif method == "spearman":
@@ -453,9 +448,8 @@ def get_similarity_matrix(
 
     # Raise error if similarity matrix is NaN
     if similarity_matrix is np.nan:
-        raise ValueError(
-            "Could not compute similarity matrix... This commonly occurs if a band has deviation of zero"
-        )
+        msg = "Could not compute similarity matrix... This commonly occurs if a band has deviation of zero"
+        raise ValueError(msg)
 
     # Ensure the similarity matrix is normalized, symmetric, with diagonal of ones
     similarity_matrix = abs(similarity_matrix)
@@ -465,18 +459,14 @@ def get_similarity_matrix(
     np.fill_diagonal(similarity_matrix, 1)
 
     # Convert to pandas DataFrame
-    similarity_matrix = pd.DataFrame(
-        similarity_matrix, columns=data.columns, index=data.columns
-    )
-
-    return similarity_matrix
+    return pd.DataFrame(similarity_matrix, columns=data.columns, index=data.columns)
 
 
 @typechecked
 def show_similarity_matrix(
     similarity_matrix: pd.DataFrame,
 ) -> plt.Axes:
-    """Displays the similarity matrix.
+    """Display the similarity matrix.
 
     Args:
         similarity_matrix:
@@ -485,13 +475,13 @@ def show_similarity_matrix(
     """
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
-        raise TypeError(
-            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
-        )
+        msg = f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
+        raise TypeError(msg)
 
     # Check if similarity matrix is square
     if similarity_matrix.shape[0] != similarity_matrix.shape[1]:
-        raise ValueError("Similarity matrix must be square.")
+        msg = "Similarity matrix must be square."
+        raise ValueError(msg)
 
     # Show similarity matrix
     fig, ax = plt.subplots(
@@ -514,7 +504,7 @@ def show_similarity_matrix(
 def show_dendrogram(
     similarity_matrix: pd.DataFrame,
 ) -> plt.Axes:
-    """Displays a dendrogram according to the similarity matrix.
+    """Display a dendrogram according to the similarity matrix.
 
     Args:
         similarity_matrix:
@@ -526,13 +516,13 @@ def show_dendrogram(
     """
     # Type check
     if not isinstance(similarity_matrix, pd.DataFrame):
-        raise TypeError(
-            f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
-        )
+        msg = f"Expected pandas DataFrame, got {type(similarity_matrix)} instead."
+        raise TypeError(msg)
 
     # Check if similarity matrix is square
     if similarity_matrix.shape[0] != similarity_matrix.shape[1]:
-        raise ValueError("Similarity matrix must be square.")
+        msg = "Similarity matrix must be square."
+        raise ValueError(msg)
 
     # Show dendrogram
     _, ax = plt.subplots(figsize=(16, 16))
@@ -551,7 +541,7 @@ def dendrogram_dim_red(
     similarity_matrix: pd.DataFrame,
     threshold: float,
 ) -> pd.DataFrame:
-    """Performs dimensionality reduction using the threshold of the dendrogram.
+    """Perform dimensionality reduction using the threshold of the dendrogram.
 
     Implements approach described in https://scikit-learn.org/stable/auto_examples/inspection/plot_permutation_importance_multicollinear.html#handling-multicollinear-features
 
@@ -572,9 +562,8 @@ def dendrogram_dim_red(
     columns = list(similarity_matrix.columns)
     band_names = list(data.columns)
     if index != band_names or columns != band_names:
-        raise ValueError(
-            "Similarity matrix must be square with column names of data as index and columns."
-        )
+        msg = "Similarity matrix must be square with column names of data as index and columns."
+        raise ValueError(msg)
 
     # Compute linkage
     distance_matrix = 1 - similarity_matrix
@@ -588,6 +577,4 @@ def dendrogram_dim_red(
     selected_bands = [v[0] for v in cluster_id_to_band_ids.values()]
     selected_band_names = list(np.array(band_names)[selected_bands])
 
-    selected_data = data[selected_band_names]
-
-    return selected_data
+    return data[selected_band_names]

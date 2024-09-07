@@ -32,6 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from time import sleep
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import dill
 import numpy as np
@@ -74,10 +75,11 @@ def _target2raster(
     target: pd.Series | pd.DataFrame,
     indices: np.ndarray,
     plot_shape: tuple[int, int, int],
+    *,
     area2mixture: bool = False,
 ) -> np.ndarray:
     # Create target values array of shape (n_samples, n_features)
-    target_values = target.values
+    target_values = target.to_numpy()
     if len(target_values.shape) == 1:
         target_values = np.expand_dims(target_values, axis=1)
 
@@ -110,18 +112,20 @@ def _has_nan_error(
     try:
         estimator.fit([[0]], [0])
         estimator.predict([[np.nan]])
-        return False
     except ValueError:
         return True
+    else:
+        return False
 
 
 @typechecked
 def _build_pipeline(
     model: BaseEstimator,
-    do_standardize: bool,
-    do_pca: bool,
     n_components: int | None,
     model_params: dict[str, Any],
+    *,
+    do_standardize: bool,
+    do_pca: bool,
 ) -> Pipeline:
     # Set params first, as it can change _has_nan_error
     model = model.set_params(**model_params)
@@ -133,7 +137,8 @@ def _build_pipeline(
         steps.append(("scaler", StandardScaler()))
     if do_pca:
         if n_components is None:
-            raise ValueError("n_components must be set if do_pca is True.")
+            msg = "n_components must be set if do_pca is True."
+            raise ValueError(msg)
         steps.append(("pca", PCA(n_components=n_components)))
 
     steps.append(("model", model))
@@ -161,10 +166,10 @@ def _study2model(
 
     best_model = _build_pipeline(
         model,
-        study.best_params["do_standardize"],
-        study.best_params["do_pca"],
         n_components,
         model_params,
+        do_standardize=study.best_params["do_standardize"],
+        do_pca=study.best_params["do_pca"],
     )
 
     # Fit best model
@@ -181,9 +186,8 @@ def _create_paths(
 ) -> tuple[Path, Path, Path]:
     save_path_obj = Path(save_folder)
     if not save_path_obj.parent.exists():
-        raise ValueError(
-            f"Directory of save_path does not exist: {save_path_obj.parent}"
-        )
+        msg = f"Directory of save_path does not exist: {save_path_obj.parent}"
+        raise ValueError(msg)
 
     # Check if files already exist
     model_name = model.__class__.__name__
@@ -200,6 +204,7 @@ def _check_save_folder(
     data: pd.DataFrame,
     target: pd.Series,
     save_folder: str | None,
+    *,
     use_caching: bool,
 ) -> tuple[Pipeline, optuna.study.Study] | None:
     # Check for valid save_path
@@ -210,10 +215,10 @@ def _check_save_folder(
             print(f"Files already exist, skipping search: {study_path}, {model_path}")
 
             # Load best model and study
-            with open(model_path, "rb") as file:
-                best_model = dill.load(file)
-            with open(study_path, "rb") as file:
-                study = dill.load(file)
+            with model_path.open("rb") as file:
+                best_model = dill.load(file)  # noqa: S301
+            with study_path.open("rb") as file:
+                study = dill.load(file)  # noqa: S301
 
             return best_model, study
 
@@ -222,21 +227,20 @@ def _check_save_folder(
             print("Creating model from study file...")
 
             # Load the study and create the best model
-            with open(study_path, "rb") as file:
-                study = dill.load(file)
+            with study_path.open("rb") as file:
+                study = dill.load(file)  # noqa: S301
             best_model = _study2model(study, model, data, target)
 
             # Save best model
-            with open(model_path, "wb") as file:
+            with model_path.open("wb") as file:
                 dill.dump(best_model, file)
 
             return best_model, study
 
         if model_path.exists():
             # Raise error if model file exists but study file is missing
-            raise ValueError(
-                f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
-            )
+            msg = f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
+            raise ValueError(msg)
     elif use_caching:
         print("Warning: use_caching=True but save_folder=None, caching is disabled.")
 
@@ -251,11 +255,11 @@ def _save_study_model(
     model_path: Path,
 ) -> None:
     # Save study
-    with open(study_path, "wb") as file:
+    with study_path.open("wb") as file:
         dill.dump(study, file)
 
     # Save best model
-    with open(model_path, "wb") as file:
+    with model_path.open("wb") as file:
         dill.dump(best_model, file)
 
 
@@ -264,24 +268,21 @@ def _get_composite_params() -> dict[str, int]:
     compositing_path = "../reports/compositing.csv"
 
     try:
-        df = pd.read_csv(compositing_path)
+        compositing = pd.read_csv(compositing_path)
     except FileNotFoundError as exc:
-        raise FileNotFoundError(
-            f"File {compositing_path} not found. Please run the compositing notebook first."
-        ) from exc
+        msg = f"File {compositing_path} not found. Please run the compositing notebook first."
+        raise FileNotFoundError(msg) from exc
 
     metric = "F1 Score"
 
-    optimal_idx = df.groupby("Reducer")[metric].idxmax()
-    optimal_df = df.loc[optimal_idx]
+    optimal_idx = compositing.groupby("Reducer")[metric].idxmax()
+    optimal_df = compositing.loc[optimal_idx]
     optimal_df = optimal_df.set_index("Reducer")
 
     composite_dict = optimal_df["Composites"].to_dict()
 
     # Sort alphabetically
-    composite_dict = dict(sorted(composite_dict.items(), key=lambda x: x[0]))
-
-    return composite_dict
+    return dict(sorted(composite_dict.items(), key=lambda x: x[0]))
 
 
 @typechecked
@@ -297,9 +298,8 @@ def _create_composites(
     if Path(importance_path).exists():
         sentinel_bands, indices = bands_from_importance(importance_path, top_n=top_n)
     else:
-        raise FileNotFoundError(
-            f"File {importance_path} not found. Please run the band importance notebook first."
-        )
+        msg = f"File {importance_path} not found. Please run the band importance notebook first."
+        raise FileNotFoundError(msg)
 
     # Get composites by most composites first
     composite_dict = _get_composite_params()
@@ -308,6 +308,7 @@ def _create_composites(
     )
 
     # Create one composite for each reducer
+    tz = ZoneInfo("UTC")
     iterable = tqdm(composite_dict.items(), desc=f"Downloading Composites for {year}")
     for reducer, num_composites in iterable:
         composite_path = str(
@@ -321,8 +322,8 @@ def _create_composites(
                     target_path,
                     composite_path,
                     time_window=(
-                        datetime(year, 1, 1),
-                        datetime(year + 1, 1, 1),
+                        datetime(year, 1, 1, tzinfo=tz),
+                        datetime(year + 1, 1, 1, tzinfo=tz),
                     ),
                     num_composites=num_composites,
                     temporal_reducers=[reducer],
@@ -330,7 +331,7 @@ def _create_composites(
                     sentinel_bands=sentinel_bands,
                     batch_size=batch_size,
                 )
-            except BaseException as e:  # pylint: disable=broad-exception-caught
+            except BaseException as e:  # noqa: BLE001, PERF203
                 print(e)
                 sleep(sleep_time)
                 sleep_time *= 2
@@ -340,9 +341,10 @@ def _create_composites(
 def bands_from_importance(
     band_importance_path: str,
     top_n: int | None = None,
+    *,
     level_2a: bool = True,
 ) -> tuple[list[str], list[str]]:
-    """Extracts the band names of Sentinel-2 bands and indices from the band importance file.
+    """Extract the band names of Sentinel-2 bands and indices from the band importance file.
 
     The best/top_n bands are read from the band importance file. Those bands are then divided into Sentinel-2 bands and indices.
 
@@ -360,36 +362,38 @@ def bands_from_importance(
     """
     # Check path
     if not Path(band_importance_path).exists():
-        raise ValueError(f"File does not exist: {band_importance_path}")
+        msg = f"File does not exist: {band_importance_path}"
+        raise ValueError(msg)
 
     # Read band importance file
-    df = pd.read_csv(band_importance_path, index_col=0)
-    band_names = df.index
-    df = df.reset_index(drop=True)
+    band_importance = pd.read_csv(band_importance_path, index_col=0)
+    band_names = band_importance.index
+    band_importance = band_importance.reset_index(drop=True)
 
     # Divide bands into Sentinel-2 bands and indices
     if top_n is None:
-        print(f"Using maximum value in column {df.columns[0]} to determine top_n.")
-        top_n = df[df.columns[0]].idxmax() + 1
+        print(
+            f"Using maximum value in column {band_importance.columns[0]} to determine top_n."
+        )
+        top_n = band_importance[band_importance.columns[0]].idxmax() + 1
 
     best_bands = list(band_names[:top_n])
-    valid_sentinel_bands = list_bands(level_2a)
+    valid_sentinel_bands = list_bands(level_2a=level_2a)
     valid_index_bands = list_indices()
     sentinel_bands = [band for band in valid_sentinel_bands if band in best_bands]
     index_bands = [band for band in valid_index_bands if band in best_bands]
 
     # Sanity check
     if len(sentinel_bands) + len(index_bands) != len(best_bands):
-        raise ValueError(
-            "The sum of Sentinel-2 bands and index bands does not equal the number of best bands. This should not happen..."
-        )
+        msg = "The sum of Sentinel-2 bands and index bands does not equal the number of best bands. This should not happen..."
+        raise ValueError(msg)
 
     return sentinel_bands, index_bands
 
 
 @typechecked
 def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
-    """Modifies the score function of a scorer to use the leaf type mixture calculated from leaf type areas.
+    """Modify the score function of a scorer to use the leaf type mixture calculated from leaf type areas.
 
     Args:
         scorer:
@@ -399,13 +403,13 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
         Scorer with modified score function.
 
     """
-    score_func = scorer._score_func  # pylint: disable=protected-access
+    score_func = scorer._score_func  # noqa: SLF001
 
-    def mixture_score_func(
+    def _mixture_score_func(
         target_true: pd.Series,
         target_pred: pd.Series,
-        *args,
-        **kwargs,
+        *args: Any,  # noqa: ANN401
+        **kwargs: Any,  # noqa: ANN401
     ) -> Callable:
         # Convert to np.ndarray
         target_true = np.array(target_true)
@@ -417,13 +421,13 @@ def area2mixture_scorer(scorer: _BaseScorer) -> _BaseScorer:
 
         return score_func(target_true, target_pred, *args, **kwargs)
 
-    scorer._score_func = mixture_score_func  # pylint: disable=protected-access
+    scorer._score_func = _mixture_score_func  # noqa: SLF001
 
     return scorer
 
 
 @typechecked
-def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
+def hyperparam_search(  # noqa: C901, PLR0913
     model: ClassifierMixin,
     search_space: list[tuple[str, tuple, dict[str, Any]]],
     data: pd.DataFrame,
@@ -434,10 +438,11 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     n_jobs: int = 1,
     random_state: int | None = None,
     save_folder: str | None = None,
+    *,
     use_caching: bool = True,
     always_standardize: bool = False,
 ) -> tuple[Pipeline, optuna.study.Study]:
-    """Performs hyperparameter search for a model using Optuna.
+    """Perform hyperparameter search for a model using Optuna.
 
     The search space will be explored using Optuna's TPE sampler, together with standardization and PCA for preprocessing. The best pipeline object will be returned along with the Optuna study. A KNNImputer is used for estimators not supporting NaN values.
 
@@ -476,7 +481,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         data,
         target,
         save_folder,
-        use_caching,
+        use_caching=use_caching,
     )
     if result is not None:
         return result
@@ -485,16 +490,13 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
     if save_folder is not None:
         study_path, model_path, cache_path = _create_paths(model, save_folder)
 
-    def callback(study, _):
+    def _callback(study: optuna.study.Study, _: optuna.trial.FrozenTrial) -> None:
         # Save intermediate study
         if use_caching and save_folder is not None:
-            with open(
-                cache_path,  # pylint: disable=possibly-used-before-assignment
-                "wb",
-            ) as file:
+            with cache_path.open("wb") as file:
                 dill.dump(study, file)
 
-    def objective(trial):
+    def _objective(trial: optuna.trial.Trial) -> float:
         # Choose whether to standardize and apply PCA
         standardize_options = [True, False]
         if always_standardize:
@@ -519,7 +521,13 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         }
 
         nonlocal model
-        pipe = _build_pipeline(model, do_standardize, do_pca, n_components, params)
+        pipe = _build_pipeline(
+            model,
+            n_components,
+            params,
+            do_standardize=do_standardize,
+            do_pca=do_pca,
+        )
 
         # Cross validate pipeline
         try:
@@ -529,9 +537,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
             cv_scores = cross_val_score(
                 pipe, data, target, cv=k_fold, scoring=scorer, n_jobs=-1
             )
-            score = cv_scores.min()  # Worst score
-
-            return score
+            return cv_scores.min()  # Worst score
         # Catch case that all fits fail
         except ValueError:
             print("All fits failed, returning NaN.")
@@ -539,8 +545,8 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
 
     if use_caching and save_folder is not None and Path(cache_path).exists():
         # Resume search from cache
-        with open(cache_path, "rb") as file:
-            study = dill.load(file)
+        with cache_path.open("rb") as file:
+            study = dill.load(file)  # noqa: S301
         n_trials -= len(study.trials)
 
         print(f"Resuming search from cache at trial {len(study.trials)}.")
@@ -553,7 +559,7 @@ def hyperparam_search(  # pylint: disable=too-many-arguments,too-many-locals
         )
 
     # Optimize study
-    study.optimize(objective, callbacks=[callback], n_trials=n_trials, n_jobs=n_jobs)
+    study.optimize(_objective, callbacks=[_callback], n_trials=n_trials, n_jobs=n_jobs)
 
     best_model = _study2model(study, model, data, target)
 
@@ -610,9 +616,7 @@ def cv_predict(
     target_pred = cross_val_predict(model, data, target, cv=cv, n_jobs=-1)
     target_pred = np2pd_like(target_pred, target)
 
-    plot = _target2raster(target_pred, indices_array, shape)
-
-    return plot
+    return _target2raster(target_pred, indices_array, shape)
 
 
 @typechecked
@@ -623,7 +627,7 @@ def create_data(
     batch_size: int | None = None,
     top_n: int | None = None,
 ) -> None:
-    """Creates a data raster for a given year ready to be used for inference using the Earth Engine API.
+    """Create a data raster for a given year ready to be used for inference using the Earth Engine API.
 
     The files band_importance.csv and compositing.csv are expected to be located in "../reports/". The data raster is saved in the data_folder/year folder with the final data raster being saved as data_folder/year/data.tif.
 
