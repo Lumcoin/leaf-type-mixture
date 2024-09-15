@@ -1,4 +1,0 @@
-extend = "../pyproject.toml"
-lint.ignore = [
-  "I001",  # isort, because of bug 
-]

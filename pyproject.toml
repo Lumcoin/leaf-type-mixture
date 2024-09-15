@@ -54,7 +54,7 @@ test = ["pytest"]
 lint = ["ruff"]
 
 [project.urls]
-Repository = "https://github.com/peter-hofinger/sentinel-leaf-classifier"
+Repository = "https://github.com/peter-hofinger/sentinel-leaf-classification"
 
 [tool.ruff.lint]
 select = ["ALL"]

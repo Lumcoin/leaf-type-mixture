@@ -21,10 +21,9 @@ Our results highlight the potential of tailored Sentinel-2 composites for classi
 This repository requires **Python 3.10** or later. To install the required packages we recommend using [mamba](https://mamba.readthedocs.io/en/latest/installation/mamba-installation.html). Install all necessary packages by running the following commands in the root directory of this repository:
 
 ```bash
-mamba create -n slc -y xgboost poetry uv
+mamba create -n slc -y xgboost uv
 mamba activate slc
-poetry build
-uv pip install dist/slc-1.0.0-py3-none-any.whl
+uv pip install -e '.[test,lint]'
 ```
 
 To use the **Earth Engine API**, authenticate with `python -c "import ee;ee.Authenticate()"`. A browser tab should open after you execute the code. After following the website instructions you can use the API. Repeat this process whenever your token expires.
@@ -35,35 +34,34 @@ To use the **Earth Engine API**, authenticate with `python -c "import ee;ee.Auth
 
 All experiments described in our paper are implemented in the notebooks within the `notebooks` directory. After completing the installation and setup, you can run these notebooks in your preferred IDE.
 
-# CI/CD
+# CI Pipeline
 
 This GitHub repository uses [GitHub Actions](https://github.com/features/actions) for continuous integration (CI). The CI pipeline is defined in the `.github/workflows` directory. It includes:
-- **Code quality checks** using [ruff](https://docs.astral.sh/ruff/)
-- **Testing** using [pytest](https://docs.pytest.org/)
+- **Linting** with [ruff](https://docs.astral.sh/ruff/)
+- **Testing** with [pytest](https://docs.pytest.org/)
 
 To run the CI workflow locally, execute the following commands from the repository directory:
 
 ```bash
-mamba install -y ruff pytest
 ruff check --select I --fix
 ruff format
 pytest
 ```
 
-The code was formatted using following VS Code settings:
+The code was formatted automatically using following VS Code settings alongside the `charliermarsh.ruff` extension:
 
 ```json
 "notebook.formatOnSave.enabled": true,
 "notebook.codeActionsOnSave": {
-  "notebook.source.fixAll": "explicit",
-  "notebook.source.organizeImports": "explicit",
+    "notebook.source.fixAll": "explicit",
+    "notebook.source.organizeImports": "explicit",
 },
 "python.analysis.ignore": ["*"],
 "[python]": {
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-      "source.fixAll": "always",
-      "source.organizeImports": "always",
+        "source.fixAll": "always",
+        "source.organizeImports": "always",
     },
     "editor.defaultFormatter": "charliermarsh.ruff",
 },
@@ -95,4 +93,4 @@ If you use this repository in your research, please cite our paper:
 }
 ```
 
-Thank you for using our code and contributing to the advancement of science!
+Thank you for using our code and contributing to the advancement of remote sensing!

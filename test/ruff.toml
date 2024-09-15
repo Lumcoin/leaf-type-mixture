@@ -1,7 +1,4 @@
-# Extend the `pyproject.toml` file in the parent directory...
 extend = "../pyproject.toml"
-
-# ...but use a different line length.
 lint.ignore = [
     "ANN001",  # arg type annotation
     "ANN002",  # args annotation
