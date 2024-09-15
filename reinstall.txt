@@ -6,4 +6,4 @@ mamba update -y mamba conda python
 pip install --upgrade pip
 mamba create -n slc -y xgboost uv
 mamba activate slc
-uv pip install -e '.[test]'
+uv pip install -e '.[test,lint]'

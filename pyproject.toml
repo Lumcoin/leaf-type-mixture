@@ -51,6 +51,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+lint = ["ruff"]
 
 [project.urls]
 Repository = "https://github.com/peter-hofinger/sentinel-leaf-classifier"
@@ -64,3 +65,6 @@ ignore = [
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]  # speed up
