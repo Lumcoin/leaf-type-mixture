@@ -19,12 +19,16 @@ Typical usage example:
 """
 
 import io
+from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
+from matplotlib.cm import viridis
+from matplotlib.patches import Patch
+from rasterio.plot import show
 from typeguard import typechecked
 
 from slc.data import combine_band_name, split_band_name
@@ -307,3 +311,82 @@ def fig2array(fig: plt.Figure | None = None) -> np.ndarray:
         fig.savefig(buff, format="png")
         buff.seek(0)
         return plt.imread(buff)
+
+
+@typechecked
+def save_fig(
+    fig: plt.Figure,
+    file_path: str | Path,
+    **kwargs: Any,  # noqa: ANN401
+) -> None:
+    """Save a matplotlib figure to a file.
+
+    Args:
+        fig:
+            Matplotlib figure to save.
+        file_path:
+            File path to save the figure to.
+        **kwargs:
+            Additional keyword arguments to pass to fig.savefig(). Defaults to dpi=300 and transparent=True.
+
+    """
+    defaults = {"dpi": 300, "transparent": True}
+    kwargs = {**defaults, **kwargs}
+
+    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(file_path, **kwargs)
+    plt.savefig(file_path)
+
+
+@typechecked
+def plot_rasterio(
+    ds_reader: rasterio.io.DatasetReader,
+    title: str,
+    ignore_mask: pd.Series | None = None,
+    save_folder: Path = Path("../reports/figures/generalization/"),
+    *,
+    alternative_dlt: bool = False,
+) -> None:
+    """Plot a raster with a legend for the leaf type.
+
+    Args:
+        ds_reader:
+            The rasterio dataset reader.
+        title:
+            The title of the plot.
+        ignore_mask:
+            A Series with the flattened raster of boolean values indicating whether a pixel should be ignored.
+        save_folder:
+            The folder to save the plot to. Defaults to "../reports/figures/generalization/".
+        alternative_dlt:
+            Whether to use the alternative DLT. Defaults to False.
+
+    """
+    content = ds_reader.read()
+    if ignore_mask is not None:
+        larix_raster = ignore_mask.to_numpy().reshape(content.shape[1:])
+        content[:, larix_raster] = np.nan
+
+    fig, ax = plt.subplots()
+    ax = show(content, interpolation="nearest", ax=ax)
+    ax.axis("off")
+    ax.set_title(title)
+
+    handles = [
+        Patch(facecolor=viridis.get_over(), label="Conifer"),
+        Patch(facecolor=viridis.get_under(), label="Broadleaf"),
+    ]
+    if alternative_dlt:
+        handles = [
+            Patch(facecolor=viridis.get_over(), label="Evergreen"),
+            Patch(facecolor=viridis.get_under(), label="Deciduous"),
+        ]
+
+    ax.legend(
+        handles=handles,
+        title="Leaf Type",
+        loc="center left",
+        bbox_to_anchor=(1, 0.5),
+    )
+
+    save_fig(fig, f"{save_folder/title}.svg")

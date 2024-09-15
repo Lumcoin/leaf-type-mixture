@@ -6,8 +6,8 @@ from numpy.random import default_rng
 from optuna import Study
 from skelm import ELMClassifier
 from sklearn.datasets import make_classification
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import f1_score, make_scorer
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline
 from slc.models import cv_predict, hyperparam_search
 
@@ -75,6 +75,24 @@ class TestHyperparamSearch(unittest.TestCase):
         )
         assert elm_study1.best_params == elm_study2.best_params
         assert elm_model1[-1].get_params() == elm_model2[-1].get_params()
+
+    def test_reproducible_score(self):
+        elm_model, elm_study = hyperparam_search(
+            self.model,
+            self.search_space,
+            self.data,
+            self.target,
+            self.scorer,
+            n_trials=1,
+            random_state=42,
+        )
+
+        k_fold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        cv_scores = cross_val_score(
+            elm_model, self.data, self.target, cv=k_fold, scoring=self.scorer, n_jobs=-1
+        )
+
+        assert np.isclose(elm_study.best_value, np.mean(cv_scores))
 
 
 def test_cv_predict(data_path, target_path):

@@ -39,20 +39,19 @@ All experiments described in our paper are implemented in the notebooks within t
 
 This GitHub repository uses [GitHub Actions](https://github.com/features/actions) for continuous integration (CI). The CI pipeline is defined in the `.github/workflows` directory. It includes:
 - **Code quality checks** using [ruff](https://docs.astral.sh/ruff/)
-- **Testing** using [pytest](https://docs.pytest.org/).
-
-> *Functions using the Earth Engine API are not tested due to authentication concerns.*
+- **Testing** using [pytest](https://docs.pytest.org/)
 
 To run the CI workflow locally, execute the following commands from the repository directory:
+
 ```bash
-# TODO: ruff commands do not work yet
-mamba install ruff pytest
-ruff ltm
-ruff --disable=missing-module-docstring,missing-class-docstring,missing-function-docstring test
+mamba install -y ruff pytest
+ruff check --select I --fix
+ruff format
 pytest
 ```
 
 The code was formatted using following VS Code settings:
+
 ```json
 "notebook.formatOnSave.enabled": true,
 "notebook.codeActionsOnSave": {
@@ -73,7 +72,7 @@ The code was formatted using following VS Code settings:
 
 # Acknowledgements
 
-We would like to thank all the contributors and reviewers for their valuable feedback and support. This work was supported by [Funding Source].
+We would like to thank all the contributors and reviewers for their valuable feedback and support.
 
 # Contact
 

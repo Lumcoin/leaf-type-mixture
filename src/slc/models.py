@@ -39,6 +39,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import rasterio
+from loguru import logger
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.decomposition import PCA
 from sklearn.impute import KNNImputer
@@ -173,7 +174,7 @@ def _study2model(
     )
 
     # Fit best model
-    print("Fitting best model on complete dataset...")
+    logger.debug("Fitting best model on complete dataset...")
     best_model.fit(data, target)
 
     return best_model
@@ -212,7 +213,9 @@ def _check_save_folder(
         study_path, model_path, _ = _create_paths(model, save_folder)
 
         if study_path.exists() and model_path.exists():
-            print(f"Files already exist, skipping search: {study_path}, {model_path}")
+            logger.info(
+                f"Files already exist, skipping search: {study_path}, {model_path}"
+            )
 
             # Load best model and study
             with model_path.open("rb") as file:
@@ -224,7 +227,7 @@ def _check_save_folder(
 
         if study_path.exists():
             # Inform user
-            print("Creating model from study file...")
+            logger.info("Creating model from study file...")
 
             # Load the study and create the best model
             with study_path.open("rb") as file:
@@ -242,7 +245,7 @@ def _check_save_folder(
             msg = f"Study file is missing, please delete the model file manually and rerun the script: {model_path}"
             raise ValueError(msg)
     elif use_caching:
-        print("Warning: use_caching=True but save_folder=None, caching is disabled.")
+        logger.info("use_caching=True but save_folder=None, caching is disabled.")
 
     return None
 
@@ -332,7 +335,7 @@ def _create_composites(
                     batch_size=batch_size,
                 )
             except BaseException as e:  # noqa: BLE001, PERF203
-                print(e)
+                logger.debug(str(e))
                 sleep(sleep_time)
                 sleep_time *= 2
 
@@ -372,7 +375,7 @@ def bands_from_importance(
 
     # Divide bands into Sentinel-2 bands and indices
     if top_n is None:
-        print(
+        logger.info(
             f"Using maximum value in column {band_importance.columns[0]} to determine top_n."
         )
         top_n = band_importance[band_importance.columns[0]].idxmax() + 1
@@ -537,10 +540,10 @@ def hyperparam_search(  # noqa: C901, PLR0913
             cv_scores = cross_val_score(
                 pipe, data, target, cv=k_fold, scoring=scorer, n_jobs=-1
             )
-            return cv_scores.min()  # Worst score
+            return cv_scores.mean()
         # Catch case that all fits fail
         except ValueError:
-            print("All fits failed, returning NaN.")
+            logger.info("All fits failed, returning NaN.")
             return np.nan
 
     if use_caching and save_folder is not None and Path(cache_path).exists():
@@ -549,7 +552,7 @@ def hyperparam_search(  # noqa: C901, PLR0913
             study = dill.load(file)  # noqa: S301
         n_trials -= len(study.trials)
 
-        print(f"Resuming search from cache at trial {len(study.trials)}.")
+        logger.info(f"Resuming search from cache at trial {len(study.trials)}.")
     else:
         # Start new search
         study = optuna.create_study(
@@ -674,3 +677,53 @@ def create_data(
 
     # Save the concatenated data
     save_raster(total_data, target_path, str(data_path))
+
+
+@typechecked
+def rolling_window(
+    x: pd.Series,
+    data: pd.DataFrame,
+    window_width: float,
+    function: Callable,
+    n_samples: int = 100,
+) -> pd.DataFrame:
+    """Compute a rolling window over a pandas DataFrame.
+
+    Args:
+        x:
+            The x-axis values of each row in the DataFrame.
+        data:
+            The DataFrame containing the data to be windowed.
+        window_width:
+            The width of the window in the x-axis units.
+        function:
+            The function to be applied to each window. Must return a dictionary like {"Point Estimate": float, "Lower Bound": float, "Upper Bound": float}.
+        n_samples:
+            The number of samples to be taken from the x-axis. The number of rows in the resulting DataFrame.
+
+    Returns:
+        A DataFrame containing the results of the function applied to each window. The index are the x-axis values of the windows.
+
+    """
+    min_sample_size = 2
+    if n_samples < min_sample_size:
+        msg = "n_samples must be at least 2"
+        raise ValueError(msg)
+
+    x = x.reset_index(drop=True)
+    data = data.reset_index(drop=True)
+
+    idcs = x.argsort()
+    sorted_x = x[idcs]
+    data = data.loc[idcs]
+
+    x_values = []
+    results = []
+    for x_value in np.linspace(sorted_x.min(), sorted_x.max(), n_samples):
+        mask = sorted_x.between(x_value - window_width / 2, x_value + window_width / 2)
+        data_window = data[mask]
+        result = function(data_window)
+        x_values.append(x_value)
+        results.append(result)
+
+    return pd.DataFrame(results, index=x_values)

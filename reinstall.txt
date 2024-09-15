@@ -2,8 +2,8 @@ mamba activate base
 mamba remove -n slc --all
 mamba clean --all -y
 pip cache purge
-mamba update mamba conda python
+mamba update -y mamba conda python
 pip install --upgrade pip
 mamba create -n slc -y xgboost uv
 mamba activate slc
-uv pip install -e .
+uv pip install -e '.[test]'

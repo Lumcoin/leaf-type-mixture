@@ -55,6 +55,7 @@ import pandas as pd
 import rasterio
 import utm
 from defusedxml.ElementTree import parse
+from loguru import logger
 from pyproj import CRS
 from rasterio.io import MemoryFile
 from tqdm.notebook import tqdm
@@ -76,7 +77,7 @@ def _initialize_ee() -> None:
         try:
             ee.Initialize()
         except ee.ee_exception.EEException:
-            print("Initializing Earth Engine API...")
+            logger.debug("Initializing Earth Engine API...")
             ee.Authenticate()
             ee.Initialize()
 
@@ -552,8 +553,8 @@ def _save_image(
     # Warn user of GEE quota limits
     limit = 40
     if len(band_batches) > limit:
-        print(
-            "Warning: Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size to reduce the number of batches.",
+        logger.info(
+            "Google Earth Engine usually has a quota limit of 40 concurrent requests. Consider increasing batch_size to reduce the number of batches."
         )
 
     # Get all image data using gather()
@@ -563,7 +564,7 @@ def _save_image(
     except (aiohttp.ClientError, ValueError) as exc:
         if len(band_batches) == 1:
             raise ValueError from exc
-        print("Failed to download asynchroniously. Trying synchroniously...")
+        logger.debug("Failed to download asynchroniously. Trying synchroniously...")
         coroutines = [_get_image_data(image, bands=batch) for batch in band_batches]
         results = _gather(*coroutines, desc="Batches", asynchronous=False)
 
@@ -577,7 +578,7 @@ def _save_image(
         dst.write(image_raster)
         dst.descriptions = bands
 
-    print(f"GeoTIFF saved as {file_path}")
+    logger.debug(f"GeoTIFF saved as {file_path}")
 
 
 @typechecked
@@ -696,7 +697,7 @@ def _compute_target(
     fine_scale = min(plot["dbh"].min() * 5, SCALE)
     smallest_dbh = 0.05
     if plot["dbh"].min() < smallest_dbh:
-        print("Info: DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
+        logger.info("DBH < 0.05 m found. Google Earth Engine might ignore small trees.")
         fine_scale = 0.25
 
     # Compute broadleaf and conifer area
@@ -769,7 +770,7 @@ def list_reducers(*, use_buffered_reducers: bool = True) -> list[str]:
 
     # Initialize Earth Engine API
     _initialize_ee()
-    print("Checking for valid reducers...")
+    logger.debug("Checking for valid reducers...")
 
     # Create dummy image collection and point
     image = ee.Image.constant(0)
@@ -970,7 +971,7 @@ def compute_target(
     """
     # Initialize Earth Engine API
     _initialize_ee()
-    print("Preparing labels...")
+    logger.debug("Preparing labels...")
 
     # Ensure proper plot DataFrame and path format
     plot = _check_plot(plot)
@@ -1001,13 +1002,13 @@ def compute_target(
     while True:
         try:
             # Save target
-            print("Computing labels...")
+            logger.debug("Computing labels...")
             _save_image(target, target_path)
             break
         except ee.ee_exception.EEException as exc:
             if not retry:
                 raise ValueError from exc
-            print("Failed to compute labels. Retrying...")
+            logger.debug("Failed to compute labels. Retrying...")
             continue
 
 
@@ -1054,15 +1055,15 @@ def sentinel_composite(  # noqa: PLR0913
     """
     # Initialize Earth Engine API
     _initialize_ee()
-    print("Preparing Sentinel-2 data...")
+    logger.debug("Preparing Sentinel-2 data...")
 
     # Check if band limit of 5000 is exceeded
     _check_band_limit(
         sentinel_bands,
-        level_2a,
         indices,
         temporal_reducers,
         num_composites,
+        level_2a=level_2a,
     )
 
     # Get region of interest (ROI), scale, and coordinate reference system (CRS)
@@ -1108,7 +1109,7 @@ def sentinel_composite(  # noqa: PLR0913
     data = _prettify_band_names(data)
 
     # Save data
-    print("Computing data...")
+    logger.debug("Computing data...")
     _save_image(data, data_path_to, batch_size=batch_size)
 
 
@@ -1128,7 +1129,7 @@ def shapefile2raster(
     """
     # Initialize Earth Engine API
     _initialize_ee()
-    print("Preparing labels...")
+    logger.debug("Preparing labels...")
 
     # Ensure proper path format
     shapefile_path = str(shapefile_path)
@@ -1178,7 +1179,7 @@ def shapefile2raster(
     target = target.reproject(scale=SCALE, crs=crs)
 
     # Save target
-    print("Computing image...")
+    logger.debug("Computing image...")
     _save_image(target, raster_path)
 
 

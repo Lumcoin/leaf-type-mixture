@@ -15,6 +15,7 @@ Typical usage example:
     save_raster(data, data_path, "data_interpolated.tif")
 """
 
+import shutil
 from collections import defaultdict
 from os import PathLike
 from pathlib import Path
@@ -24,6 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio
+from loguru import logger
 from scipy.cluster import hierarchy
 from scipy.cluster.hierarchy import dendrogram, ward
 from scipy.spatial.distance import squareform
@@ -144,9 +146,8 @@ def load_dataset(
 
         lonely_files = list(data_names.union(target_names).difference(common_names))
         if lonely_files:
-            print(
-                "Warning: All files in data and target directories without a corresponding file are discarded:",
-                lonely_files,
+            logger.info(
+                f"All files in data and target directories without a corresponding file are discarded: {lonely_files}"
             )
 
         data = []
@@ -177,6 +178,39 @@ def load_dataset(
     target = target.map({"evergreen": 1, "deciduous": 0})
 
     return data, target
+
+
+@typechecked
+def genera2target_raster(src_path: Path, dst_path: Path) -> None:
+    """Convert a raster containing base area per genera to a raster containing the target with 1 representing evergreen and 0 representing deciduous.
+
+    Args:
+        src_path:
+            A Path representing the file path to the source raster. The suffix '.tif' (GeoTIFF) is expected.
+        dst_path:
+            A Path representing the file path to the destination raster.
+
+    """
+    target = load_raster(src_path, monochrome_as_dataframe=True)
+    target = genera2target(target)
+    target = target.map({"deciduous": 0, "evergreen": 1})
+    target = target.to_numpy()
+
+    # Read profile and raster params
+    with rasterio.open(src_path) as src:
+        profile = src.profile
+        nan_mask = np.isnan(src.read()).all(axis=0)
+        nan_mask = np.expand_dims(nan_mask, axis=0)
+
+    shape = nan_mask.shape
+    profile["count"] = shape[0]
+
+    # Write prediction to target raster
+    shutil.copy(src_path, dst_path)
+    with rasterio.open(dst_path, "w", **profile) as dst:
+        reshaped = target.reshape(shape).astype(float)
+        dst.write(reshaped)
+        dst.descriptions = ("Evergreen",)
 
 
 @typechecked
@@ -423,6 +457,9 @@ def get_similarity_matrix(
     elif method == "spearman":
         similarity_matrix = spearmanr(data_values).correlation
     elif method == "mutual_info":
+        logger.info(
+            "Mutual information implementation is scientifically wrong, but might be useful for gaining insights."
+        )
         # EXPERIMENTAL, most likely scientifically wrong
         n_neighbors = min(3, data_values.shape[0] - 1)
         similarity_matrix = np.full(
@@ -465,12 +502,15 @@ def get_similarity_matrix(
 @typechecked
 def show_similarity_matrix(
     similarity_matrix: pd.DataFrame,
+    ax: plt.Axes | None = None,
 ) -> plt.Axes:
     """Display the similarity matrix.
 
     Args:
         similarity_matrix:
             A pandas DataFrame containing the similarity matrix.
+        ax:
+            A matplotlib Axes object. Defaults to None.
 
     """
     # Type check
@@ -484,12 +524,15 @@ def show_similarity_matrix(
         raise ValueError(msg)
 
     # Show similarity matrix
-    fig, ax = plt.subplots(
-        figsize=(
-            similarity_matrix.columns.shape[0] * 0.3,
-            similarity_matrix.columns.shape[0] * 0.3,
+    if ax is None:
+        fig, ax = plt.subplots(
+            figsize=(
+                similarity_matrix.columns.shape[0] * 0.3,
+                similarity_matrix.columns.shape[0] * 0.3,
+            )
         )
-    )
+    else:
+        fig = ax.get_figure()
     image = ax.imshow(similarity_matrix, interpolation="nearest", vmin=0, vmax=1)
     fig.colorbar(image)
     ax.set_xticks(range(similarity_matrix.columns.shape[0]))
@@ -497,18 +540,25 @@ def show_similarity_matrix(
     ax.set_xticklabels(similarity_matrix.columns, rotation="vertical")
     ax.set_yticklabels(similarity_matrix.columns)
 
+    ax.set_title("Similarity Matrix")
+    ax.set_xlabel("Band")
+    ax.set_ylabel("Band")
+
     return ax
 
 
 @typechecked
 def show_dendrogram(
     similarity_matrix: pd.DataFrame,
+    ax: plt.Axes | None = None,
 ) -> plt.Axes:
     """Display a dendrogram according to the similarity matrix.
 
     Args:
         similarity_matrix:
             A pandas DataFrame containing the similarity matrix.
+        ax:
+            A matplotlib Axes object. Defaults to None.
 
     Returns:
         A matplotlib Axes object.
@@ -525,12 +575,15 @@ def show_dendrogram(
         raise ValueError(msg)
 
     # Show dendrogram
-    _, ax = plt.subplots(figsize=(16, 16))
+    if ax is None:
+        ax = plt.subplot()
     distance_matrix = 1 - similarity_matrix
     dist_linkage = ward(squareform(distance_matrix))
-    _ = dendrogram(
-        dist_linkage, labels=similarity_matrix.columns, ax=ax, leaf_rotation=90
-    )
+    dendrogram(dist_linkage, labels=similarity_matrix.columns, ax=ax, leaf_rotation=90)
+
+    ax.set_title("Dendrogram")
+    ax.set_xlabel("Band")
+    ax.set_ylabel("Distance")
 
     return ax
 
