@@ -31,8 +31,6 @@ jobs:
       - name: Install uv
         run: pip install uv
       - name: Install package
-        run: uv pip install --system -e .
-      - name: Install pytest
-        run: uv pip install --system pytest
+        run: uv pip install --system -e .[test]
       - name: Run Tests
         run: python -m pytest
