@@ -29,20 +29,20 @@ Each notebook has legacy markdown that needs to be rewritten to match the curren
 
 ### 1.4 `hyperparameter tuning` Notebook
 - [x] Make the code ruff compliant.
-- [ ] Review and rewrite the introduction section.
-- [ ] Update markdown for the hyperparameter tuning process.
-- [ ] Rewrite explanations for any optimization results.
-- [ ] Update conclusions and summary markdown.
-- [ ] Enable figure saving for all plots.
+- [x] Review and rewrite the introduction section.
+- [x] Update markdown for the hyperparameter tuning process.
+- [x] Rewrite explanations for any optimization results.
+- [x] Update conclusions and summary markdown.
+- [x] Enable figure saving for all plots.
 
 ### 1.5 `Generalization` Notebook
 - [x] Make the code ruff compliant.
-- [ ] Compute all scores on the test set, then separately compare the best one to DLT 2018 product
-- [ ] Review and rewrite the introduction section.
-- [ ] Update markdown for the generalization techniques.
-- [ ] Rewrite explanations for results and discussions.
-- [ ] Update conclusions and summary markdown.
-- [ ] Enable figure saving for all plots.
+- [x] Compute all scores on the test set, then separately compare the best one to DLT 2018 product
+- [x] Review and rewrite the introduction section.
+- [x] Update markdown for the generalization techniques.
+- [x] Rewrite explanations for results and discussions.
+- [x] Update conclusions and summary markdown.
+- [x] Enable figure saving for all plots.
 
 ## 2. Linting with Ruff
 The `slc` package needs to be checked against any Ruff linting warnings.
@@ -75,24 +75,24 @@ Ensure other repository files are up-to-date and consistent with the current ver
 - [x] Update dependencies and settings if necessary.
 
 ### 3.2 `README.md`
-- [ ] Review and update the `README.md`.
-- [ ] Ensure that the README reflects the current state and purpose of the repository.
+- [x] Review and update the `README.md`.
+- [x] Ensure that the README reflects the current state and purpose of the repository.
 
 ### 3.3 `reports/` Directory
-- [ ] Check the `reports/` directory for any outdated reports.
-- [ ] Update or remove old reports if necessary.
+- [x] Check the `reports/` directory for any outdated reports.
+- [x] Update or remove old reports if necessary.
 
 ### 3.4 `models/` Directory
-- [ ] Review the `models/` directory for any outdated models.
-- [ ] Update model documentation and any related files.
+- [x] Review the `models/` directory for any outdated models.
+- [x] Update model documentation and any related files.
 
 ### 3.5 `data/` Directory
-- [ ] Review the `data/` directory for any unnecessary or outdated files.
-- [ ] Ensure that the data files are correctly documented and relevant.
+- [x] Review the `data/` directory for any unnecessary or outdated files.
+- [x] Ensure that the data files are correctly documented and relevant.
 
 ### 3.6 Repository Cleanup
-- [ ] Review the entire repository for any other outdated files or code.
-- [ ] Remove or archive unnecessary files.
+- [x] Review the entire repository for any other outdated files or code.
+- [x] Remove or archive unnecessary files.
 
 ## 4. Updating Tests
 The tests need to be partially rewritten since they assume an older version of the repository.
